@@ -239,15 +239,7 @@ def train(
             
             with open("log_time"+idx_train+".txt",'a') as f:
                 f.write("tpred %f\n"%t_pred)
-#                with open("debug.txt",'a') as f:
-#                    f.write("pred:"+str(pred)+'\n')
-#                    f.write("pred_center:"+str(pred_center)+'\n')
-#                    f.write("pred_2_shape:"+str(pred[2].shape)+'\n')
-#                    f.write("pred_0_device:"+str(pred[0].device)+'\n')
-#                    f.write("pred_1_device:"+str(pred[1].device)+'\n')
-#                    f.write("pred_2_device:"+str(pred[2].device)+'\n')
-#                    f.write("pred_center_shape:"+str(pred_center.shape)+'\n')
-#                    f.write("pred_center_device:"+str(pred_center.device)+'\n')
+
 
             # Compute loss
 #            try:
