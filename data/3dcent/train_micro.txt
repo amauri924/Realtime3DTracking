@@ -1,0 +1,10 @@
+YoloV3_Annotation_Tool-master/Image_test/000050.jpg
+YoloV3_Annotation_Tool-master/Image_test/000051.jpg
+YoloV3_Annotation_Tool-master/Image_test/000052.jpg
+YoloV3_Annotation_Tool-master/Image_test/000053.jpg
+YoloV3_Annotation_Tool-master/Image_test/000054.jpg
+YoloV3_Annotation_Tool-master/Image_test/000055.jpg
+YoloV3_Annotation_Tool-master/Image_test/000056.jpg
+YoloV3_Annotation_Tool-master/Image_test/000057.jpg
+YoloV3_Annotation_Tool-master/Image_test/000058.jpg
+YoloV3_Annotation_Tool-master/Image_test/000060.jpg
