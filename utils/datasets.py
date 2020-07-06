@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-#from tqdm import tqdm
+
 from PIL import Image, ExifTags
 
 from utils.utils import xyxy2xywh, xywh2xyxy
@@ -319,6 +319,13 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 labels[:, 2] = ratioh * h * (x[:, 2] - x[:, 4] / 2) + padh
                 labels[:, 3] = ratiow * w * (x[:, 1] + x[:, 3] / 2) + padw
                 labels[:, 4] = ratioh * h * (x[:, 2] + x[:, 4] / 2) + padh
+                
+                #3D Center GT
+#                labels[:, 5] = (ratiow * w * x[:, 5] + padw)-labels[:, 1]
+#                labels[:, 6] = (ratioh * h * x[:, 6] + padh)-labels[:, 2]
+                labels[:, 5] = (ratiow * w * x[:, 5] + padw)
+                labels[:, 6] = (ratioh * h * x[:, 6] + padh)
+
 
         # Augment image and labels
         if self.augment:
@@ -330,8 +337,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             labels[:, 1:5] = xyxy2xywh(labels[:, 1:5])
 
             # Normalize coordinates 0 - 1
+            labels[:,6]/=img.shape[0]
+            labels[:,5]/=img.shape[1]
             labels[:, [2, 4]] /= img.shape[0]  # height
             labels[:, [1, 3]] /= img.shape[1]  # width
+            
+            
 
         if self.augment:
             # random left-right flip
@@ -348,8 +359,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if nL:
                     labels[:, 2] = 1 - labels[:, 2]
 
-        labels_out = torch.zeros((nL, 6))
+        labels_out = torch.zeros((nL, 6+2))
+
         if nL:
+
             labels_out[:, 1:] = torch.from_numpy(labels)
 
         # Normalize

@@ -15,7 +15,7 @@ def test(
         batch_size=16,
         img_size=416,
         iou_thres=0.5,
-        conf_thres=0.001,
+        conf_thres=0.1,
         nms_thres=0.5,
         save_json=False,
         model=None
@@ -57,7 +57,12 @@ def test(
     print(('%30s' + '%10s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1'))
     loss, p, r, f1, mp, mr, map, mf1 = 0., 0., 0., 0., 0., 0., 0., 0.
     jdict, stats, ap, ap_class = [], [], [], []
+    center_abs_err=[]
     for batch_i, (imgs, targets, paths, shapes) in enumerate(dataloader):
+#        print(paths)
+#        if paths[0]=='YoloV3_Annotation_Tool-master/Images/002623.jpg':
+#            print('merde')
+        
         targets = targets.to(device)
         imgs = imgs.to(device)
         _, _, height, width = imgs.shape  # batch size, channels, height, width
@@ -67,17 +72,16 @@ def test(
 #            plot_images(imgs=imgs, targets=targets, paths=paths, fname='test_batch0.jpg')
 
         # Run model
-        inf_out, train_out = model(imgs)  # inference and training outputs
+        output, center_pred_list = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres)  # inference and training outputs
 
-        # Compute loss
-        if hasattr(model, 'hyp'):  # if model has loss hyperparameters
-            loss += compute_loss(train_out, targets, model)[0].item()
+
 
         # Run NMS
-        output = non_max_suppression(inf_out, conf_thres=conf_thres, nms_thres=nms_thres)
+#        output = non_max_suppression(inf_out, conf_thres=conf_thres, nms_thres=nms_thres)
 
         # Statistics per image
         for si, pred in enumerate(output):
+            center_pred=center_pred_list[si]
             labels = targets[targets[:, 0] == si, 1:]
             nl = len(labels)
             tcls = labels[:, 0].tolist() if nl else []  # target class
@@ -87,10 +91,6 @@ def test(
                 if nl:
                     stats.append(([], torch.Tensor(), torch.Tensor(), tcls))
                 continue
-
-            # Append to text file
-            # with open('test.txt', 'a') as file:
-            #    [file.write('%11.5g' * 7 % tuple(x) + '\n') for x in pred]
 
             # Append to pycocotools JSON dictionary
             if save_json:
@@ -110,6 +110,7 @@ def test(
 
             # Assign all predictions as incorrect
             correct = [0] * len(pred)
+            associated_target = []
             if nl:
                 detected = []
                 tcls_tensor = labels[:, 0]
@@ -118,7 +119,13 @@ def test(
                 tbox = xywh2xyxy(labels[:, 1:5])
                 tbox[:, [0, 2]] *= width
                 tbox[:, [1, 3]] *= height
+                
+                tcent=labels[:, 5:]
 
+                tcent[:, 0] *= width
+                tcent[:, 1] *= height
+
+                
                 # Search for correct predictions
                 for i, (*pbox, pconf, pcls_conf, pcls) in enumerate(pred):
 
@@ -133,12 +140,33 @@ def test(
                     # Best iou, index between pred and targets
                     m = (pcls == tcls_tensor).nonzero().view(-1)
                     iou, bi = bbox_iou(pbox, tbox[m]).max(0)
-
                     # If iou > threshold and class is correct mark as correct
-                    if iou > iou_thres and m[bi] not in detected:  # and pcls == tcls[bi]:
+                    if iou > iou_thres and m[bi] not in [ind[1] for ind in detected]:  # and pcls == tcls[bi]:
                         correct[i] = 1
-                        detected.append(m[bi])
-
+                        detected.append((i,m[bi].cpu().item()))
+                
+                #Compute 3D center error
+                if len(detected)>0:
+                    for idx_pred,idx_target in detected:
+                        target_center=tcent[idx_target].clone()
+                        predicted_center=center_pred[idx_pred].clone()
+                        obj_cls=int(tcls[idx_target])
+                        
+                        predicted_center=predicted_center[obj_cls:obj_cls+2]
+                        
+                        w_bbox=pred[idx_pred][2].cpu().item()-pred[idx_pred][0].cpu().item()
+                        h_bbox=pred[idx_pred][3].cpu().item()-pred[idx_pred][1].cpu().item()
+                        centerbbox_x=pred[idx_pred][0].cpu().item()+w_bbox/2
+                        centerbbox_y=pred[idx_pred][1].cpu().item()+h_bbox/2
+                        
+                        predicted_center[0]=predicted_center[0]*w_bbox+centerbbox_x
+                        predicted_center[1]=predicted_center[1]*h_bbox+centerbbox_y
+                        
+                        center_abs_err.append(torch.mean(torch.tensor([abs(predicted_center[0]-target_center[0])/target_center[0],abs(predicted_center[1]-target_center[1])/target_center[1]])))
+#                        
+                        
+                
+                
             # Append statistics (correct, conf, pcls, tcls)
             stats.append((correct, pred[:, 4].cpu(), pred[:, 6].cpu(), tcls))
 
@@ -148,6 +176,8 @@ def test(
     if len(stats):
         p, r, ap, f1, ap_class = ap_per_class(*stats)
         mp, mr, map, mf1 = p.mean(), r.mean(), ap.mean(), f1.mean()
+        
+        
 
     # Print results
     pf = '%30s' + '%10.3g' * 6  # print format
@@ -158,43 +188,28 @@ def test(
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i]))
 
-    # Save JSON
-#    if save_json and map and len(jdict):
-#        imgIds = [int(Path(x).stem.split('_')[-1]) for x in dataset.img_files]
-#        with open('results.json', 'w') as file:
-#            json.dump(jdict, file)
-#
-#        from pycocotools.coco import COCO
-#        from pycocotools.cocoeval import COCOeval
-#
-#        # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-#        cocoGt = COCO('../coco/annotations/instances_val2014.json')  # initialize COCO ground truth api
-#        cocoDt = cocoGt.loadRes('results.json')  # initialize COCO pred api
-#
-#        cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
-#        cocoEval.params.imgIds = imgIds  # [:32]  # only evaluate these images
-#        cocoEval.evaluate()
-#        cocoEval.accumulate()
-#        cocoEval.summarize()
-#        map = cocoEval.stats[1]  # update mAP to pycocotools mAP
 
     # Return results
     maps = np.zeros(nc) + map
+    if len(center_abs_err)>0:
+        center_abs_err=torch.mean(torch.tensor(center_abs_err)).cpu().item()
+    else:
+        center_abs_err=0
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
-    return (mp, mr, map, mf1, loss / len(dataloader)), maps
+    return (mp, mr, map, mf1, loss / len(dataloader), center_abs_err), maps
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-adapt.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/adapt.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/old/best.pt', help='path to weights file')
+    parser.add_argument('--batch-size', type=int, default=3, help='size of each image batch')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/3dcent.data', help='coco.data file path')
+    parser.add_argument('--weights', type=str, default='weights/best_1.1.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='iou threshold required to qualify as detected')
-    parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
+    parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.5, help='iou threshold for non-maximum suppression')
-    parser.add_argument('--save-json', default=True, help='save a cocoapi-compatible JSON results file')
+    parser.add_argument('--save-json', default=False, help='save a cocoapi-compatible JSON results file')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     opt = parser.parse_args()
     print(opt)

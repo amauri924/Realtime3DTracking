@@ -41,7 +41,7 @@ def detect(
         _ = load_darknet_weights(model, weights)
 
     # Fuse Conv2d + BatchNorm2d layers
-    model.fuse()
+#    model.fuse()
 
     # Eval mode
     model.to(device).eval()
@@ -69,13 +69,16 @@ def detect(
 
         # Get detections
         img = torch.from_numpy(img).unsqueeze(0).to(device)
-        pred, _ = model(img)
-        det = non_max_suppression(pred, conf_thres, nms_thres)[0]
+        det, center_pred = model(img,conf_thres=opt.conf_thres, nms_thres=opt.nms_thres)
+        det=det[0]
+#        det = non_max_suppression(pred, conf_thres, nms_thres)[0]
 
         if det is not None and len(det) > 0:
             # Rescale boxes from 416 to true image size
             det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
-
+            idxs=torch.max(det[:,5:],1).indices
+            centers=[(center_pred[i,idxs[i]],center_pred[i,idxs[i]+1]) for i in range(len(idxs))]
+            
             # Print results to screen
             print('%gx%g ' % img.shape[2:], end='')  # print image size
             for c in det[:, -1].unique():
@@ -83,10 +86,15 @@ def detect(
                 print('%g %ss' % (n, classes[int(c)]), end=', ')
 
             # Draw bounding boxes and labels of detections
-            for *xyxy, conf, cls_conf, cls in det:
+            for j,(*xyxy, conf, cls_conf, cls) in enumerate(det):
                 if save_txt:  # Write to file
                     with open(save_path + '.txt', 'a') as file:
                         file.write(('%g ' * 6 + '\n') % (*xyxy, cls, conf))
+
+                #get 3d center pixel coord
+                x=xyxy[0]+centers[j][0]*(xyxy[2]-xyxy[0])
+                y=xyxy[1]+centers[j][1]*(xyxy[3]-xyxy[1])
+                cv2.circle(im0,(int(x.cpu().item()),int(y.cpu().item())),3,color=colors[int(cls)])
 
                 # Add bbox to the image
                 label = '%s %.2f' % (classes[int(cls)], conf)
@@ -120,9 +128,9 @@ def detect(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-spp.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/coco.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/yolov3-spp.weights', help='path to weights file')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/3dcent.data', help='coco.data file path')
+    parser.add_argument('--weights', type=str, default='weights/best_1.5.pt', help='path to weights file')
     parser.add_argument('--images', type=str, default='data/samples', help='path to images')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='object confidence threshold')

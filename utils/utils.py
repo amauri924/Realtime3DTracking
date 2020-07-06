@@ -271,16 +271,21 @@ def wh_iou(box1, box2):
     return inter_area / union_area  # iou
 
 
-def compute_loss(p, targets, model, giou_loss=True):  # predictions, targets, model
+def compute_loss(p,p_center, targets, model,img_shape, giou_loss=True):  # predictions, targets, model
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
-    lxy, lwh, lcls, lobj = ft([0]), ft([0]), ft([0]), ft([0])
-    txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
-    h = model.hyp  # hyperparameters
+    lxy, lwh, lcls, lobj, lcent = ft([0]), ft([0]), ft([0]), ft([0]), ft([0])
+    txy, twh,tcent, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
 
+    if type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel):
+        model = model.module
+        
+    h = model.hyp  # hyperparameters
+    
     # Define criteria
     MSE = nn.MSELoss(reduction='sum')
     BCEcls = nn.BCEWithLogitsLoss(pos_weight=ft([h['cls_pw']]), reduction='sum')
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=ft([h['obj_pw']]), reduction='sum')
+    L1loss=torch.nn.L1Loss()
     # CE = nn.CrossEntropyLoss()  # (weight=model.class_weights)
 
     # Compute losses
@@ -297,6 +302,13 @@ def compute_loss(p, targets, model, giou_loss=True):  # predictions, targets, mo
         if nb:  # number of targets
             nt += nb
             pi = pi0[b, a, gj, gi]  # predictions closest to anchors
+            
+            
+            #we use this for the 3d center losses
+
+#            tcent[i][:,0]/=rois[:,2]
+#            tcent[i][:,1]/=rois[:,3]
+            
             tobj[b, a, gj, gi] = 1.0  # obj
             # pi[..., 2:4] = torch.sigmoid(pi[..., 2:4])  # wh power loss (uncomment)
 
@@ -308,6 +320,19 @@ def compute_loss(p, targets, model, giou_loss=True):  # predictions, targets, mo
                 lxy += (k * h['xy']) * MSE(torch.sigmoid(pi[..., 0:2]), txy[i])  # xy loss
                 lwh += MSE(pi[..., 2:4], twh[i])  # wh yolo loss
 
+                        
+            
+#            lcent+=L1loss(pcent,tcent[i])
+            
+#            if torch.isnan(lcent).item():
+#                with open('nan.txt','a') as f:
+#                    f.write("Pred center: \n\n")
+#                    f.write(str(pcent))
+#                    
+#                    f.write("\n\nTargets: \n\n")
+#                    f.write(str(tcent[i]))
+            
+            
             tclsm = torch.zeros_like(pi[..., 5:])
             tclsm[range(nb), tcls[i]] = 1.0
             lcls += BCEcls(pi[..., 5:], tclsm)  # cls loss (BCE)
@@ -318,27 +343,45 @@ def compute_loss(p, targets, model, giou_loss=True):  # predictions, targets, mo
             #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
 
         lobj += BCEobj(pi0[..., 4], tobj)  # obj loss
-
+    pcent= p_center #Associated 3D centers
+    pcent=torch.cat([pcent.view(pcent.shape[0],-1,2)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,2) #Select center prediction corresponding to the target class
+    rois=targets[:,2:6].clone() # Rois closest to anchors 
+    rois[:,0]*=img_shape[0]
+    rois[:,2]*=img_shape[0]
+    rois[:,1]*=img_shape[1]
+    rois[:,3]*=img_shape[1]
+    
+    target_cent=targets[:,-2:].clone()
+    target_cent[:,0]*=img_shape[0]
+    target_cent[:,1]*=img_shape[1]
+    
+#    rois[:,0]=rois[:,0]-rois[:,2]/2
+#    rois[:,1]=rois[:,1]-rois[:,3]/2
+    target_cent=target_cent-rois[:,:2]
+    
+    target_cent[:,0]/=rois[:,2]
+    target_cent[:,1]/=rois[:,3]
+    
     lxy *= (k * h['giou']) / nt
     lwh *= (k * h['wh']) / nt
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
+    lcent += ((bs))*10*L1loss(pcent,target_cent)
+    loss = lxy + lwh + lobj + lcls + lcent
 
-    loss = lxy + lwh + lobj + lcls
-
-    return loss, torch.cat((lxy, lwh, lobj, lcls, loss)).detach()
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent, loss)).detach()
 
 
 def build_targets(model, targets):
     # targets = [image, class, x, y, w, h]
-    iou_thres = model.hyp['iou_t']  # hyperparameter
+    
     if type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel):
         model = model.module
-
+    iou_thres = model.hyp['iou_t']  # hyperparameter
     nt = len(targets)
-    txy, twh, tcls, tbox, indices, anchor_vec = [], [], [], [], [], []
-    for i in model.yolo_layers:
-        layer = model.module_list[i][0]
+    txy, twh, tcls, tbox, indices, anchor_vec,tcent = [], [], [], [], [], [],[]
+    for i in model.Yolov3.yolo_layers:
+        layer = model.Yolov3.module_list[i][0]
 
         # iou of targets-anchors
         t, a = targets, []
@@ -372,6 +415,9 @@ def build_targets(model, targets):
         gxy -= gxy.floor()
         txy.append(gxy)
 
+        #3D center coordinates
+        tcent.append(t[:,-2:])
+
         # GIoU
         tbox.append(torch.cat((gxy, gwh), 1))  # xywh (grids)
         anchor_vec.append(layer.anchor_vec[a])
@@ -385,7 +431,7 @@ def build_targets(model, targets):
         if c.shape[0]:
             assert c.max() <= layer.nc, 'Target classes exceed model classes'
 
-    return txy, twh, tcls, tbox, indices, anchor_vec, layer.nc
+    return txy, twh,tcent, tcls, tbox, indices, anchor_vec, layer.nc
 
 
 def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.5):
