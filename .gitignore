@@ -2,5 +2,8 @@
 *.txt
 
 weights/
+<<<<<<< Updated upstream
 
 *.pyc
+=======
+>>>>>>> Stashed changes
