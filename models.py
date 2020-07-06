@@ -205,6 +205,20 @@ class Top_layer(nn.Module):
                               
         return modules
 
+class Depth_Layer(nn.Module):
+    def __init__(self):
+        super(Top_layer, self).__init__()
+        self.module_list=self.init_mod()
+
+    def forward(self,x):
+        x=self.module_list(x).mean(3).mean(2)
+        return x
+        
+    def init_mod(self):
+        modules=nn.Sequential(Bottleneck(1024,512,stride=2,downsample=downsample(1024,2048)),
+                Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1))
+                              
+        return modules
 
 class EmptyLayer(nn.Module):
     """Placeholder for 'route' and 'shortcut' layers"""
@@ -265,34 +279,6 @@ class YOLOLayer(nn.Module):
 
         # p.view(bs, 255, 13, 13) -- > (bs, 3, 13, 13, 85)  # (bs, anchors, grid, grid, classes + xywh)
         p = p.view(bs, self.na, self.nc + 5, self.ny, self.nx).permute(0, 1, 3, 4, 2).contiguous()  # prediction
-
-#        if self.training:
-#            return p
-
-#        elif ONNX_EXPORT:
-#            # Constants CAN NOT BE BROADCAST, ensure correct shape!
-#            ngu = self.ng.repeat((1, self.na * self.nx * self.ny, 1))
-#            grid_xy = self.grid_xy.repeat((1, self.na, 1, 1, 1)).view((1, -1, 2))
-#            anchor_wh = self.anchor_wh.repeat((1, 1, self.nx, self.ny, 1)).view((1, -1, 2)) / ngu
-#
-#            # p = p.view(-1, 5 + self.nc)
-#            # xy = torch.sigmoid(p[..., 0:2]) + grid_xy[0]  # x, y
-#            # wh = torch.exp(p[..., 2:4]) * anchor_wh[0]  # width, height
-#            # p_conf = torch.sigmoid(p[:, 4:5])  # Conf
-#            # p_cls = F.softmax(p[:, 5:85], 1) * p_conf  # SSD-like conf
-#            # return torch.cat((xy / ngu[0], wh, p_conf, p_cls), 1).t()
-#
-#            p = p.view(1, -1, 5 + self.nc)
-#            xy = torch.sigmoid(p[..., 0:2]) + grid_xy  # x, y
-#            wh = torch.exp(p[..., 2:4]) * anchor_wh  # width, height
-#            p_conf = torch.sigmoid(p[..., 4:5])  # Conf
-#            p_cls = p[..., 5:5 + self.nc]
-#            # Broadcasting only supported on first dimension in CoreML. See onnx-coreml/_operators.py
-#            # p_cls = F.softmax(p_cls, 2) * p_conf  # SSD-like conf
-#            p_cls = torch.exp(p_cls).permute((2, 1, 0))
-#            p_cls = p_cls / p_cls.sum(0).unsqueeze(0) * p_conf.permute((2, 1, 0))  # F.softmax() equivalent
-#            p_cls = p_cls.permute(2, 1, 0)
-#            return torch.cat((xy / ngu, wh, p_conf, p_cls), 2).squeeze().t()
 
 #        else:  # inference
         io = p.clone().detach()  # inference output
