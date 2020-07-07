@@ -141,6 +141,7 @@ scenes=nusc.scene
 sample_list=nusc.sample
 all_classes=[]
 valid_classes=['car','pedestrian','truck','motorcycle','bus','bicycle']
+max_distance=200
 for scene in scenes:
 
     
@@ -170,30 +171,16 @@ for scene in scenes:
                 corners=transform_3d_to_2d(corners,camera_intrinsic)
                 if len(nusc.get('sample_annotation',box.token)['category_name'].split('.'))>1:
                     center=get_3d_center(box.center,camera_intrinsic)
-                    labels.append((nusc.get('sample_annotation',box.token)['category_name'].split('.')[1],[(min(corners[0,:]),min(corners[1,:])),(max(corners[0,:]),max(corners[1,:]))],center))
+                    dist=np.sqrt(box.center[0]**2+box.center[1]**2+box.center[2]**2)
+                    labels.append((nusc.get('sample_annotation',box.token)['category_name'].split('.')[1],[(min(corners[0,:]),min(corners[1,:])),(max(corners[0,:]),max(corners[1,:]))],center,dist))
                 
         
         im = cv2.imread(data_path)
         im_width=im.shape[1]
         im_height=im.shape[0]
-#        for box in visible_boxes:
-#            
-#            center=get_3d_center(box.center,camera_intrinsic)
-#            c = nusc.explorer.get_color(box.name)
-#            box.render_cv2(im, view=camera_intrinsic, normalize=True, colors=(c, c, c))
-#            im = cv2.circle(im, (center[0],center[1]), 2, (0,0,255), thickness=2)
-        
-        
-        
-        
-        
-        
-                    # Show updated canvas.
-#        if not os.path.exists("/home/antoine/test_img_NS/scene%i"%scene_id):
-#            os.mkdir("/home/antoine/test_img_NS/scene%i"%scene_id)
         cv2.imwrite("/home/antoine/test_img_NS/scene%i_sample%i.png"%(scene_id,sample_id), im)
         with open("/home/antoine/test_img_NS/scene%i_sample%i.txt"%(scene_id,sample_id),'w') as f:
-            for obj_class,bbox,center in labels:
+            for obj_class,bbox,center,dist in labels:
                 if obj_class in valid_classes:
                     obj_idx=valid_classes.index(obj_class)
                     x,y,w,h=xyxy2xywh(bbox)
@@ -203,12 +190,12 @@ for scene in scenes:
                     w/=im_width
                     y/=im_height
                     h/=im_height
-                    if x>=1 or y>=1 or w>=1 or h>=1 or center_x>=1 or center_y>=1:
+                    if x>=1 or y>=1 or w>=1 or h>=1 or center_x>=1 or center_y>=1 or x<0 or y<0 or h<0 or w<0 or center_x<0 or center_y<0 or dist>max_distance:
                         continue
-                    f.write(str(obj_idx)+' '+str(x)+' '+str(y)+' '+str(w)+' '+str(h)+' '+str(center_x)+' '+str(center_y)+'\n')
+                    f.write(str(obj_idx)+' '+str(x)+' '+str(y)+' '+str(w)+' '+str(h)+' '+str(center_x)+' '+str(center_y)+' '+str(dist/max_distance)+'\n')
 
         with open("list.txt",'a') as f:
-            f.write("/save/2020010/amauri03/NuScenes_3d_BBOX/data/scene%i_sample%i.png"%(scene_id,sample_id)+'\n')
+            f.write("/home/antoine/test_img_NS/scene%i_sample%i.png"%(scene_id,sample_id)+'\n')
 
 
 

@@ -271,10 +271,10 @@ def wh_iou(box1, box2):
     return inter_area / union_area  # iou
 
 
-def compute_loss(p,p_center, targets, model,img_shape, giou_loss=True):  # predictions, targets, model
+def compute_loss(p,p_center,p_depth, targets, model,img_shape, giou_loss=True):  # predictions, targets, model
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
-    lxy, lwh, lcls, lobj, lcent = ft([0]), ft([0]), ft([0]), ft([0]), ft([0])
-    txy, twh,tcent, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
+    lxy, lwh, lcls, lobj, lcent, ldepth = ft([0]), ft([0]), ft([0]), ft([0]), ft([0]), ft([0])
+    txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
 
     if type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel):
         model = model.module
@@ -302,13 +302,6 @@ def compute_loss(p,p_center, targets, model,img_shape, giou_loss=True):  # predi
         if nb:  # number of targets
             nt += nb
             pi = pi0[b, a, gj, gi]  # predictions closest to anchors
-            
-            
-            #we use this for the 3d center losses
-
-#            tcent[i][:,0]/=rois[:,2]
-#            tcent[i][:,1]/=rois[:,3]
-            
             tobj[b, a, gj, gi] = 1.0  # obj
             # pi[..., 2:4] = torch.sigmoid(pi[..., 2:4])  # wh power loss (uncomment)
 
@@ -319,18 +312,6 @@ def compute_loss(p,p_center, targets, model,img_shape, giou_loss=True):  # predi
             else:
                 lxy += (k * h['xy']) * MSE(torch.sigmoid(pi[..., 0:2]), txy[i])  # xy loss
                 lwh += MSE(pi[..., 2:4], twh[i])  # wh yolo loss
-
-                        
-            
-#            lcent+=L1loss(pcent,tcent[i])
-            
-#            if torch.isnan(lcent).item():
-#                with open('nan.txt','a') as f:
-#                    f.write("Pred center: \n\n")
-#                    f.write(str(pcent))
-#                    
-#                    f.write("\n\nTargets: \n\n")
-#                    f.write(str(tcent[i]))
             
             
             tclsm = torch.zeros_like(pi[..., 5:])
@@ -345,18 +326,18 @@ def compute_loss(p,p_center, targets, model,img_shape, giou_loss=True):  # predi
         lobj += BCEobj(pi0[..., 4], tobj)  # obj loss
     pcent= p_center #Associated 3D centers
     pcent=torch.cat([pcent.view(pcent.shape[0],-1,2)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,2) #Select center prediction corresponding to the target class
+    p_depth=torch.cat([p_depth.view(p_depth.shape[0],-1,1)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,1) #Select center prediction corresponding to the target class
     rois=targets[:,2:6].clone() # Rois closest to anchors 
     rois[:,0]*=img_shape[0]
     rois[:,2]*=img_shape[0]
     rois[:,1]*=img_shape[1]
     rois[:,3]*=img_shape[1]
     
-    target_cent=targets[:,-2:].clone()
+    target_depth=targets[:,8].clone().view(-1,1)
+    
+    target_cent=targets[:,6:8].clone()
     target_cent[:,0]*=img_shape[0]
     target_cent[:,1]*=img_shape[1]
-    
-#    rois[:,0]=rois[:,0]-rois[:,2]/2
-#    rois[:,1]=rois[:,1]-rois[:,3]/2
     target_cent=target_cent-rois[:,:2]
     
     target_cent[:,0]/=rois[:,2]
@@ -367,9 +348,10 @@ def compute_loss(p,p_center, targets, model,img_shape, giou_loss=True):  # predi
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
     lcent += ((bs))*10*L1loss(pcent,target_cent)
-    loss = lxy + lwh + lobj + lcls + lcent
+    ldepth += 3*bs*MSE(p_depth,target_depth)
+    loss = lxy + lwh + lobj + lcls + lcent + ldepth
 
-    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent, loss)).detach()
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth, loss)).detach()
 
 
 def build_targets(model, targets):
@@ -379,7 +361,7 @@ def build_targets(model, targets):
         model = model.module
     iou_thres = model.hyp['iou_t']  # hyperparameter
     nt = len(targets)
-    txy, twh, tcls, tbox, indices, anchor_vec,tcent = [], [], [], [], [], [],[]
+    txy, twh, tcls, tbox, indices, anchor_vec= [], [], [], [], [], []
     for i in model.Yolov3.yolo_layers:
         layer = model.Yolov3.module_list[i][0]
 
@@ -415,9 +397,6 @@ def build_targets(model, targets):
         gxy -= gxy.floor()
         txy.append(gxy)
 
-        #3D center coordinates
-        tcent.append(t[:,-2:])
-
         # GIoU
         tbox.append(torch.cat((gxy, gwh), 1))  # xywh (grids)
         anchor_vec.append(layer.anchor_vec[a])
@@ -431,7 +410,7 @@ def build_targets(model, targets):
         if c.shape[0]:
             assert c.max() <= layer.nc, 'Target classes exceed model classes'
 
-    return txy, twh,tcent, tcls, tbox, indices, anchor_vec, layer.nc
+    return txy, twh, tcls, tbox, indices, anchor_vec, layer.nc
 
 
 def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.5):

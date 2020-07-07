@@ -58,10 +58,9 @@ def test(
     loss, p, r, f1, mp, mr, map, mf1 = 0., 0., 0., 0., 0., 0., 0., 0.
     jdict, stats, ap, ap_class = [], [], [], []
     center_abs_err=[]
+    depth_abs_err=[]
     for batch_i, (imgs, targets, paths, shapes) in enumerate(dataloader):
-#        print(paths)
-#        if paths[0]=='YoloV3_Annotation_Tool-master/Images/002623.jpg':
-#            print('merde')
+
         
         targets = targets.to(device)
         imgs = imgs.to(device)
@@ -72,7 +71,7 @@ def test(
 #            plot_images(imgs=imgs, targets=targets, paths=paths, fname='test_batch0.jpg')
 
         # Run model
-        output, center_pred_list = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres)  # inference and training outputs
+        output, center_pred_list, depth_pred_list = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres)  # inference and training outputs
 
 
 
@@ -82,6 +81,7 @@ def test(
         # Statistics per image
         for si, pred in enumerate(output):
             center_pred=center_pred_list[si]
+            depth_pred=depth_pred_list[si]
             labels = targets[targets[:, 0] == si, 1:]
             nl = len(labels)
             tcls = labels[:, 0].tolist() if nl else []  # target class
@@ -120,7 +120,8 @@ def test(
                 tbox[:, [0, 2]] *= width
                 tbox[:, [1, 3]] *= height
                 
-                tcent=labels[:, 5:]
+                tcent=labels[:, 5:7]
+                tdepth=labels[:,7]*200
 
                 tcent[:, 0] *= width
                 tcent[:, 1] *= height
@@ -145,14 +146,18 @@ def test(
                         correct[i] = 1
                         detected.append((i,m[bi].cpu().item()))
                 
-                #Compute 3D center error
+                #Compute 3D center error + depth error
                 if len(detected)>0:
                     for idx_pred,idx_target in detected:
                         target_center=tcent[idx_target].clone()
                         predicted_center=center_pred[idx_pred].clone()
-                        obj_cls=int(tcls[idx_target])
                         
+                        target_depth=tdepth[idx_target].clone()
+                        predicted_depth=depth_pred[idx_pred].clone()
+                        
+                        obj_cls=int(tcls[idx_target])
                         predicted_center=predicted_center[obj_cls:obj_cls+2]
+                        predicted_depth=predicted_depth[obj_cls:obj_cls+1]
                         
                         w_bbox=pred[idx_pred][2].cpu().item()-pred[idx_pred][0].cpu().item()
                         h_bbox=pred[idx_pred][3].cpu().item()-pred[idx_pred][1].cpu().item()
@@ -163,7 +168,7 @@ def test(
                         predicted_center[1]=predicted_center[1]*h_bbox+centerbbox_y
                         
                         center_abs_err.append(torch.mean(torch.tensor([abs(predicted_center[0]-target_center[0])/target_center[0],abs(predicted_center[1]-target_center[1])/target_center[1]])))
-#                        
+                        depth_abs_err.append(abs(predicted_depth*200-target_depth)/((predicted_depth+0.00001)*200))
                         
                 
                 
@@ -193,11 +198,13 @@ def test(
     maps = np.zeros(nc) + map
     if len(center_abs_err)>0:
         center_abs_err=torch.mean(torch.tensor(center_abs_err)).cpu().item()
+        depth_abs_err=torch.mean(torch.tensor(depth_abs_err)).cpu().item()
     else:
         center_abs_err=0
+        depth_abs_err=0
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
-    return (mp, mr, map, mf1, loss / len(dataloader), center_abs_err), maps
+    return (mp, mr, map, mf1, loss / len(dataloader), center_abs_err,depth_abs_err), maps
 
 
 if __name__ == '__main__':

@@ -143,7 +143,7 @@ def train(
 #                            sampler=sampler)
 
     # Mixed precision training https://github.com/NVIDIA/apex
-    mixed_precision = False
+    mixed_precision = True
     if mixed_precision:
         try:
             from apex import amp
@@ -179,7 +179,7 @@ def train(
                 if int(name.split('.')[1]) < cutoff:  # if layer < 75
                     p.requires_grad = False if epoch == 0 else True
 
-        mloss = torch.zeros(6)  # mean losses
+        mloss = torch.zeros(7)  # mean losses
         
         for i, (imgs, targets, paths, _) in enumerate(dataloader):
             imgs = imgs.to(device)
@@ -225,7 +225,7 @@ def train(
             
             # Run model
             t_pred=time.time()
-            pred,pred_center = model(imgs,targets=input_targets)
+            pred,pred_center,depth_pred = model(imgs,targets=input_targets)
             t_pred=time.time()-t_pred
             
             with open("log_time"+idx_train+".txt",'a') as f:
@@ -234,7 +234,7 @@ def train(
 
             # Compute loss
             try:
-                loss, loss_items = compute_loss(pred,pred_center, targets, model,imgs.shape[2:], giou_loss=not opt.xywh)
+                loss, loss_items = compute_loss(pred,pred_center,depth_pred, targets, model,imgs.shape[2:], giou_loss=not opt.xywh)
             except:
                 with open("debug.txt",'a') as f:
                     f.write("error in loss\n")
@@ -269,7 +269,7 @@ def train(
             mloss = (mloss * i + loss_items.cpu()) / (i + 1)  # update mean losses
             # s = ('%8s%12s' + '%10.3g' * 7) % ('%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), time.time() - t)
             for x in optimizer.param_groups:
-                s = ('%8s%12s' + '%10.3g' * 9) % (
+                s = ('%8s%12s' + '%10.3g' * 10) % (
                     '%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), img_size, x['lr'])
             del pred,pred_center
             t = time.time()
@@ -302,7 +302,7 @@ def train(
 
         # Write epoch results
         with open(result_path, 'a') as file:
-            file.write(s + '%11.3g' * 6 % results + '\n')  # P, R, mAP, F1, test_loss
+            file.write(s + '%11.3g' * 7 % results + '\n')  # P, R, mAP, F1, test_loss
 
         # Update best map
 #        fitness = results[2]

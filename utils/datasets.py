@@ -359,7 +359,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if nL:
                     labels[:, 2] = 1 - labels[:, 2]
 
-        labels_out = torch.zeros((nL, 6+2))
+        labels_out = torch.zeros((nL, 6+3))
 
         if nL:
 

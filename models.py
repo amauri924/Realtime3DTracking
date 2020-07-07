@@ -177,6 +177,38 @@ class Bottleneck(nn.Module):
 
         return x
 
+
+class ConvBlock(nn.Module):
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None):
+        super(ConvBlock, self).__init__()
+        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, stride=stride)  # change
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1,
+                               padding=1)
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.conv3 = nn.Conv2d(planes, planes, kernel_size=1)
+        self.bn3 = nn.BatchNorm2d(planes)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+
+        x = self.conv3(x)
+        x = self.bn3(x)
+        x = self.relu(x)
+
+        return x
+
+
+
 class downsample(nn.Module):
     def __init__(self,in_channel,out_channel):
         super(downsample, self).__init__()
@@ -206,18 +238,22 @@ class Top_layer(nn.Module):
         return modules
 
 class Depth_Layer(nn.Module):
-    def __init__(self):
-        super(Top_layer, self).__init__()
-        self.module_list=self.init_mod()
+    def __init__(self,nc):
+        super(Depth_Layer, self).__init__()
+        self.nc=nc
+        self.convblock=ConvBlock(1024,2048)
+        self.lin=nn.Linear(in_features=2048, out_features=1*self.nc, bias=True)
+        self.relu= nn.ReLU(inplace=True)
+        
 
     def forward(self,x):
-        x=self.module_list(x).mean(3).mean(2)
+        x=self.convblock(x).mean(3).mean(2)
+        x=self.lin(x)
+        x=self.relu(x)
         return x
         
     def init_mod(self):
-        modules=nn.Sequential(Bottleneck(1024,512,stride=2,downsample=downsample(1024,2048)),
-                Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1))
-                              
+        modules=nn.Sequential(ConvBlock(1024,2048),nn.Linear(in_features=2048, out_features=1*self.nc, bias=True))
         return modules
 
 class EmptyLayer(nn.Module):
@@ -317,7 +353,7 @@ class Darknet(nn.Module):
         self.featurePooling=RoiAlign()
         
         self.top_layer=Top_layer()
-
+        self.depth_pred=Depth_Layer(self.nc)
         self.center_prediction=center_pred(self.nc)
         
         self.hyp=hyp
@@ -337,19 +373,23 @@ class Darknet(nn.Module):
             rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
             time_NMS=time.time()-time_NMS
             center_pred_list=[]
+            depth_pred_list=[]
             for roi in rois:
                 if roi is None:
                     center_pred_list.append(None)
+                    depth_pred_list.append(None)
                     continue
-                pooled_features=self.featurePooling(features, roi).clone()
+                pooled_features=self.featurePooling(features, roi)
+                depth_pred=self.depth_pred(pooled_features)
                 pooled_features=self.top_layer(pooled_features) # Run the final layers 
                 center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
                 center_pred_list.append(center_pred)
+                depth_pred_list.append(depth_pred)
                 del pooled_features
             del features
-            return rois,center_pred_list
+            return rois,center_pred_list,depth_pred_list
         else:
-            p ,features,io_orig=  self.Yolov3(x) # inference output, training output
+            p ,features,_=  self.Yolov3(x) # inference output, training output
             targets=torch.from_numpy(targets)
             targets=targets.to(features.device)
             device_id=int(str(x.device)[-1])
@@ -362,15 +402,16 @@ class Darknet(nn.Module):
             mask_3=mask_1&mask_2
             targets=targets[mask_3]
             
-            roi=targets[:,2:]
+            roi=targets[:,2:6]
             b=new_idxs[mask_3]
             pooled_features=self.featurePooling(features, roi,b)
+            depth_pred=self.depth_pred(pooled_features)
             del b,roi
-            pooled_features=self.top_layer(pooled_features) # Run the final layers 
-            center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
+            top_layer=self.top_layer(pooled_features) # Run the final layers 
+            center_pred=self.center_prediction(top_layer)/100 # Run the 3D prediction
             
             
-            return p,center_pred
+            return p,center_pred,depth_pred
         
         
     def _init_weights(self):
