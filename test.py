@@ -167,8 +167,8 @@ def test(
                         predicted_center[0]=predicted_center[0]*w_bbox+centerbbox_x
                         predicted_center[1]=predicted_center[1]*h_bbox+centerbbox_y
                         
-                        center_abs_err.append(torch.mean(torch.tensor([abs(predicted_center[0]-target_center[0])/target_center[0],abs(predicted_center[1]-target_center[1])/target_center[1]])))
-                        depth_abs_err.append(abs(predicted_depth*200-target_depth)/((predicted_depth+0.00001)*200))
+                        center_abs_err.append(torch.mean(torch.tensor([abs(abs(predicted_center[0]-target_center[0])/target_center[0]),abs(abs(predicted_center[1]-target_center[1])/target_center[1])])))
+                        depth_abs_err.append(abs(abs(predicted_depth*200-target_depth)/((predicted_depth+0.00001)*200)))
                         
                 
                 
@@ -209,10 +209,10 @@ def test(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--batch-size', type=int, default=3, help='size of each image batch')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best_1.1.pt', help='path to weights file')
+    parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
+    parser.add_argument('--weights', type=str, default='weights/latest_2.1.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.5, help='iou threshold for non-maximum suppression')

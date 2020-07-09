@@ -63,18 +63,19 @@ def train(
 
     # Initialize model
     model = Darknet(cfg,hyp).to(device)
-    for name,param in model.named_parameters():
-        if not name.split('.')[0]=="depth_pred":
-            param.requires_grad = False
-        else:
-            print(name)
+    if opt.transfer:
+        for name,param in model.named_parameters():
+            if not name.split('.')[0]=="depth_pred":
+                param.requires_grad = False
+            else:
+                print(name)
     # Optimizer
     optimizer = optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
 #    optimizer = optim.Adam(model.parameters(), lr=hyp['lr0'],  weight_decay=hyp['weight_decay'])
 
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
-    best_fitness = 0
+    best_fitness = 1000
     if opt.resume or opt.transfer:  # Load previously saved model
         if opt.transfer:  # Transfer learning
 #            nf = int(model.module_defs[model.yolo_layers[0] - 1]['filters'])  # yolo layer size (i.e. 255)
@@ -181,7 +182,7 @@ def train(
         # Update scheduler
         if epoch>0:
             scheduler.step()
-
+        
         # Freeze backbone at epoch 0, unfreeze at epoch 1 (optional)
         if freeze_backbone and epoch < 2:
             for name, p in model.named_parameters():
@@ -196,8 +197,6 @@ def train(
             imgs = imgs.to(device)
             if imgs.shape[0]<torch.cuda.device_count():
                 continue
-            if i==46:
-                print("test")
             if imgs.shape[0]!=opt.batch_size:
                 continue
 #                imgs=imgs[:int(imgs.shape[0]/torch.cuda.device_count())*torch.cuda.device_count(),...]
@@ -318,8 +317,9 @@ def train(
             file.write(s + '%11.3g' * 7 % results + '\n')  # P, R, mAP, F1, test_loss
 
         # Update best map
-        fitness = results[2]
-        if fitness > best_fitness:
+        fitness = results[-1]
+        if fitness < best_fitness:
+            print("best error replaced by %f"%fitness)
             best_fitness = fitness
 
         # Update best loss

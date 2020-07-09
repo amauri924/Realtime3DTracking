@@ -178,34 +178,6 @@ class Bottleneck(nn.Module):
         return x
 
 
-class ConvBlock(nn.Module):
-
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
-        super(ConvBlock, self).__init__()
-        self.conv1 = nn.Conv2d(inplanes, int(planes/4), kernel_size=1, stride=stride,bias=False)  # change
-        self.bn1 = nn.BatchNorm2d(int(planes/4))
-        self.conv2 = nn.Conv2d(int(planes/4), int(planes/2), kernel_size=3, stride=1,
-                               padding=1,bias=False)
-        self.bn2 = nn.BatchNorm2d(int(planes/2))
-        self.conv3 = nn.Conv2d(int(planes/2), planes, kernel_size=1,bias=False)
-        self.bn3 = nn.BatchNorm2d(planes)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-
-        x = self.conv3(x)
-        x = self.bn3(x)
-        x = self.relu(x)
-
-        return x
 
 
 
@@ -228,7 +200,8 @@ class Top_layer(nn.Module):
         self.module_list=self.init_mod()
 
     def forward(self,x):
-        x=self.module_list(x).mean(3).mean(2)
+        x=self.module_list(x)
+        x=x.mean(3).mean(2)
         return x
         
     def init_mod(self):
@@ -241,20 +214,20 @@ class Depth_Layer(nn.Module):
     def __init__(self,nc):
         super(Depth_Layer, self).__init__()
         self.nc=nc
-        self.convblock=ConvBlock(1024,2048)
-        self.lin=nn.Linear(in_features=2048, out_features=1*self.nc, bias=True)
-        self.relu= nn.ReLU(inplace=True)
-        self.sigmoid=nn.Sigmoid()
-        
+        self.module_list=self.init_mod()
+        self.linear=nn.Linear(in_features=2048, out_features=1*self.nc, bias=True)
+
 
     def forward(self,x):
-        x=self.convblock(x).mean(3).mean(2)
-        x=self.sigmoid(x)
-#        x=self.relu(x)
+        x=self.module_list(x)
+        x=x.mean(3).mean(2)
+        x=self.linear(x)
         return x
         
     def init_mod(self):
-        modules=nn.Sequential(ConvBlock(1024,2048),nn.Linear(in_features=2048, out_features=1*self.nc, bias=True))
+        modules=nn.Sequential(Bottleneck(1024,512,stride=2,downsample=downsample(1024,2048)),
+                Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1))
+                              
         return modules
 
 class EmptyLayer(nn.Module):

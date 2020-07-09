@@ -348,8 +348,9 @@ def compute_loss(p,p_center,p_depth, targets, model,img_shape, giou_loss=True): 
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
     lcent += ((bs))*10*L1loss(pcent,target_cent)
-    ldepth += 3*bs*MSE(p_depth,target_depth)
-    loss = lxy + lwh + lobj + lcls + lcent + ldepth
+    ldepth += 3*bs*L1loss(p_depth,target_depth)
+#    loss = lxy + lwh + lobj + lcls + lcent + ldepth
+    loss=ldepth
 
     return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth, loss)).detach()
 
