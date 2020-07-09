@@ -63,23 +63,27 @@ def train(
 
     # Initialize model
     model = Darknet(cfg,hyp).to(device)
-
+    for name,param in model.named_parameters():
+        if not name.split('.')[0]=="depth_pred":
+            param.requires_grad = False
+        else:
+            print(name)
     # Optimizer
-    optimizer = optim.SGD(model.parameters(), lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
+    optimizer = optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
 #    optimizer = optim.Adam(model.parameters(), lr=hyp['lr0'],  weight_decay=hyp['weight_decay'])
 
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
-    best_fitness = 1e6
+    best_fitness = 0
     if opt.resume or opt.transfer:  # Load previously saved model
         if opt.transfer:  # Transfer learning
-            nf = int(model.module_defs[model.yolo_layers[0] - 1]['filters'])  # yolo layer size (i.e. 255)
-            chkpt = torch.load(weights + 'yolov3-spp.pt', map_location=device)
-            model.load_state_dict({k: v for k, v in chkpt['model'].items() if v.numel() > 1 and v.shape[0] != 255},
-                                  strict=False)
+#            nf = int(model.module_defs[model.yolo_layers[0] - 1]['filters'])  # yolo layer size (i.e. 255)
+            chkpt = torch.load(weights + 'NuScene.pt', map_location=device)
+            model_state=[k for k,v in model.state_dict().items()]
+            model.load_state_dict({k: v for k, v in chkpt['model'].items() if k in model_state},strict=False)
 
-            for p in model.parameters():
-                p.requires_grad = True if p.shape[0] == nf else False
+#            for p in model.parameters():
+#                p.requires_grad = True if p.shape[0] == nf else False
 
         else:  # resume from latest.pt
             if opt.bucket:
@@ -88,8 +92,9 @@ def train(
             model.load_state_dict(chkpt['model'])
 
         if chkpt['optimizer'] is not None:
-            optimizer.load_state_dict(chkpt['optimizer'])
-            best_fitness = chkpt['best_fitness']
+            if opt.transfer==False:
+                optimizer.load_state_dict(chkpt['optimizer'])
+                best_fitness = chkpt['best_fitness']
 
         if chkpt['training_results'] is not None:
             with open('results.txt', 'w') as file:
@@ -163,6 +168,10 @@ def train(
     t, t0 = time.time(), time.time()
     with open(log_path, 'a') as logfile:
         logfile.write("nb epochs : %i\n"%epochs)
+        
+        #Freezing layer
+
+    
     for epoch in range(start_epoch, epochs):
         model.train()
         
@@ -181,11 +190,14 @@ def train(
 
         mloss = torch.zeros(7)  # mean losses
         
+        
+        
         for i, (imgs, targets, paths, _) in enumerate(dataloader):
             imgs = imgs.to(device)
             if imgs.shape[0]<torch.cuda.device_count():
                 continue
-
+            if i==46:
+                print("test")
             if imgs.shape[0]!=opt.batch_size:
                 continue
 #                imgs=imgs[:int(imgs.shape[0]/torch.cuda.device_count())*torch.cuda.device_count(),...]
@@ -239,7 +251,8 @@ def train(
                 with open("debug.txt",'a') as f:
                     f.write("error in loss\n")
                 continue
-                
+            if loss.cpu().item()>100:
+                print("ehhh")
                 
             if torch.isnan(loss):
                 with open(log_path, 'a') as logfile:
@@ -305,15 +318,15 @@ def train(
             file.write(s + '%11.3g' * 7 % results + '\n')  # P, R, mAP, F1, test_loss
 
         # Update best map
-#        fitness = results[2]
-#        if fitness > best_fitness:
-#            best_fitness = fitness
+        fitness = results[2]
+        if fitness > best_fitness:
+            best_fitness = fitness
 
         # Update best loss
-        fitness = results[4]
-        if not math.isnan(fitness):
-            if fitness < best_fitness:
-                best_fitness = fitness
+#        fitness = results[4]
+#        if not math.isnan(fitness):
+#            if fitness < best_fitness:
+#                best_fitness = fitness
 
 
         # Save training results
@@ -376,14 +389,14 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
     parser.add_argument('--batch-size', type=int, default=2,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=10, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
-    parser.add_argument('--transfer', action='store_true', help='transfer learning flag')
+    parser.add_argument('--transfer', default=True, help='transfer learning flag')
     parser.add_argument('--num-workers', type=int, default=0, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')

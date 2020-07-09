@@ -182,12 +182,12 @@ class ConvBlock(nn.Module):
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(ConvBlock, self).__init__()
-        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, stride=stride)  # change
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1,
-                               padding=1)
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.conv3 = nn.Conv2d(planes, planes, kernel_size=1)
+        self.conv1 = nn.Conv2d(inplanes, int(planes/4), kernel_size=1, stride=stride,bias=False)  # change
+        self.bn1 = nn.BatchNorm2d(int(planes/4))
+        self.conv2 = nn.Conv2d(int(planes/4), int(planes/2), kernel_size=3, stride=1,
+                               padding=1,bias=False)
+        self.bn2 = nn.BatchNorm2d(int(planes/2))
+        self.conv3 = nn.Conv2d(int(planes/2), planes, kernel_size=1,bias=False)
         self.bn3 = nn.BatchNorm2d(planes)
         self.relu = nn.ReLU(inplace=True)
 
@@ -244,12 +244,13 @@ class Depth_Layer(nn.Module):
         self.convblock=ConvBlock(1024,2048)
         self.lin=nn.Linear(in_features=2048, out_features=1*self.nc, bias=True)
         self.relu= nn.ReLU(inplace=True)
+        self.sigmoid=nn.Sigmoid()
         
 
     def forward(self,x):
         x=self.convblock(x).mean(3).mean(2)
-        x=self.lin(x)
-        x=self.relu(x)
+        x=self.sigmoid(x)
+#        x=self.relu(x)
         return x
         
     def init_mod(self):
