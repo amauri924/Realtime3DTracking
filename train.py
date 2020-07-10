@@ -374,7 +374,7 @@ def print_mutation(hyp, results):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=2,
+    parser.add_argument('--batch-size', type=int, default=5,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=10, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
@@ -384,7 +384,7 @@ if __name__ == '__main__':
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--transfer', action='store_true', help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=10, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')

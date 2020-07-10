@@ -365,7 +365,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
         if nL:
 
-            labels_out[:, 1:] = torch.from_numpy(labels)
+            labels_out[:, 1:] = torch.from_numpy(labels[:,:7])
 
         # Normalize
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
