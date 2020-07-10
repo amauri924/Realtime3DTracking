@@ -162,7 +162,7 @@ def test(
                         predicted_center[0]=predicted_center[0]*w_bbox+centerbbox_x
                         predicted_center[1]=predicted_center[1]*h_bbox+centerbbox_y
                         
-                        center_abs_err.append(torch.mean(torch.tensor([abs(predicted_center[0]-target_center[0])/target_center[0],abs(predicted_center[1]-target_center[1])/target_center[1]])))
+                        center_abs_err.append(torch.mean(torch.tensor([abs(abs(predicted_center[0]-target_center[0])/target_center[0]),abs(abs(predicted_center[1]-target_center[1])/target_center[1])])))
 #                        
                         
                 

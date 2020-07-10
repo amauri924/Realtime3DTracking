@@ -363,7 +363,7 @@ class Darknet(nn.Module):
             del features
             return rois,center_pred_list
         else:
-            p ,features,io_orig=  self.Yolov3(x) # inference output, training output
+            p ,features,_=  self.Yolov3(x) # inference output, training output
             targets=torch.from_numpy(targets)
             targets=targets.to(features.device)
             device_id=int(str(x.device)[-1])

@@ -351,6 +351,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 img = np.fliplr(img)
                 if nL:
                     labels[:, 1] = 1 - labels[:, 1]
+                    labels[:, 5] = 1 - labels[:, 5]
 
             # random up-down flip
             ud_flip = False
@@ -358,6 +359,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 img = np.flipud(img)
                 if nL:
                     labels[:, 2] = 1 - labels[:, 2]
+                    labels[:, 6] = 1 - labels[:, 6]
 
         labels_out = torch.zeros((nL, 6+2))
 
@@ -449,17 +451,20 @@ def random_affine(img, targets=(), degrees=(-10, 10), translate=(.1, .1), scale=
     # Return warped points also
     if len(targets) > 0:
         n = targets.shape[0]
-        points = targets[:, 1:5].copy()
+        points = targets[:, 1:7].copy()
         area0 = (points[:, 2] - points[:, 0]) * (points[:, 3] - points[:, 1])
 
         # warp points
-        xy = np.ones((n * 4, 3))
-        xy[:, :2] = points[:, [0, 1, 2, 3, 0, 3, 2, 1]].reshape(n * 4, 2)  # x1y1, x2y2, x1y2, x2y1
-        xy = (xy @ M.T)[:, :2].reshape(n, 8)
+        xy = np.ones((n * 5, 3))
+        xy[:, :2] = points[:, [0, 1, 2, 3, 0, 3, 2, 1,4,5]].reshape(n * 5, 2)  # x1y1, x2y2, x1y2, x2y1 , xcyc
+        xy = (xy @ M.T)[:, :2].reshape(n, 10)
 
         # create new boxes
         x = xy[:, [0, 2, 4, 6]]
         y = xy[:, [1, 3, 5, 7]]
+        xc=xy[:, [8]]
+        yc=xy[:, [9]]
+        
         xy = np.concatenate((x.min(1), y.min(1), x.max(1), y.max(1))).reshape(4, n).T
 
         # # apply angle-based reduction of bounding boxes
@@ -474,6 +479,8 @@ def random_affine(img, targets=(), degrees=(-10, 10), translate=(.1, .1), scale=
         # reject warped points outside of image
         xy[:, [0, 2]] = xy[:, [0, 2]].clip(0, width)
         xy[:, [1, 3]] = xy[:, [1, 3]].clip(0, height)
+        xc[:,0]=xc[:,0].clip(0, width)
+        yc[:,0]=yc[:,0].clip(0, height)
         w = xy[:, 2] - xy[:, 0]
         h = xy[:, 3] - xy[:, 1]
         area = w * h
@@ -482,6 +489,8 @@ def random_affine(img, targets=(), degrees=(-10, 10), translate=(.1, .1), scale=
 
         targets = targets[i]
         targets[:, 1:5] = xy[i]
+        targets[:, 5]=xc[i,0]
+        targets[:, 6]=yc[i,0]
 
     return imw, targets
 

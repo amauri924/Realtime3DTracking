@@ -70,7 +70,7 @@ def train(
 
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
-    best_fitness = 1e6
+    best_fitness = 0
     if opt.resume or opt.transfer:  # Load previously saved model
         if opt.transfer:  # Transfer learning
             nf = int(model.module_defs[model.yolo_layers[0] - 1]['filters'])  # yolo layer size (i.e. 255)
@@ -118,7 +118,7 @@ def train(
     dataset = LoadImagesAndLabels(train_path,
                                   img_size,
                                   batch_size,
-                                  augment=False,
+                                  augment=True,
                                   rect=opt.rect)  # rectangular training
 
     # Initialize distributed training
@@ -305,15 +305,15 @@ def train(
             file.write(s + '%11.3g' * 6 % results + '\n')  # P, R, mAP, F1, test_loss
 
         # Update best map
-#        fitness = results[2]
-#        if fitness > best_fitness:
-#            best_fitness = fitness
+        fitness = results[2]
+        if fitness > best_fitness:
+            best_fitness = fitness
 
         # Update best loss
-        fitness = results[4]
-        if not math.isnan(fitness):
-            if fitness < best_fitness:
-                best_fitness = fitness
+#        fitness = results[4]
+#        if not math.isnan(fitness):
+#            if fitness < best_fitness:
+#                best_fitness = fitness
 
 
         # Save training results
@@ -384,7 +384,7 @@ if __name__ == '__main__':
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--transfer', action='store_true', help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=0, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')
