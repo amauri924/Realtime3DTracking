@@ -124,7 +124,7 @@ def train(
     dataset = LoadImagesAndLabels(train_path,
                                   img_size,
                                   batch_size,
-                                  augment=False,
+                                  augment=True,
                                   rect=opt.rect)  # rectangular training
 
     # Initialize distributed training
@@ -250,8 +250,8 @@ def train(
                 with open("debug.txt",'a') as f:
                     f.write("error in loss\n")
                 continue
-            if loss.cpu().item()>100:
-                print("ehhh")
+#            if loss.cpu().item()>100:
+#                print("ehhh")
                 
             if torch.isnan(loss):
                 with open(log_path, 'a') as logfile:
