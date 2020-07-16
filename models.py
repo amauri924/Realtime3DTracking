@@ -319,7 +319,7 @@ class center_pred(nn.Module):
 class Darknet(nn.Module):
     """YOLOv3 object detection model"""
 
-    def __init__(self, cfg,hyp, img_size=(416, 416)):
+    def __init__(self, cfg,hyp,transfer=False, img_size=(416, 416)):
         super(Darknet, self).__init__()
 
         self.Yolov3=Yolov3(cfg,img_size)
@@ -329,14 +329,14 @@ class Darknet(nn.Module):
         self.top_layer=Top_layer()
         self.depth_pred=Depth_Layer(self.nc)
         self.center_prediction=center_pred(self.nc)
-        
+        self.transfer=transfer
         self.hyp=hyp
         self._init_weights()
 
     def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0):
 
         
-        if not self.training:
+        if not self.training and not self.transfer:
             _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
             io=[]
             for line in io_orig:

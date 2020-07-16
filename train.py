@@ -23,14 +23,20 @@ hyp = {'giou': 1.666,  # giou loss gain
        'obj_pw': 8.338,  # obj BCELoss positive_weight
        'iou_t': 0.2705,  # iou target-anchor training threshold
 #       'lr0': 0.001,  # initial learning rate
-       'lr0': 0.001,  # initial learning rate
+       'lr0': 0.00001,  # initial learning rate
        'lrf': -4.,  # final learning rate = lr0 * (10 ** lrf)
        'momentum': 0.90,  # SGD momentum
        'weight_decay': 0.0005}  # optimizer weight decay
 
 
 #os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-
+def check_updated_grad(previous_state_dict,model):
+    list_k=[k for k,v in previous_state_dict.items()]
+    previous_model_state={k: v for k,v in previous_state_dict.items()}
+    actual_model_state={k: v for k,v in model.state_dict().items()}
+    for k in actual_model_state:
+        if not torch.all(torch.eq(actual_model_state[k], previous_model_state[k])).cpu().item():
+            print("%s updated"%k)
 
 def train(
         cfg,
@@ -62,7 +68,7 @@ def train(
     nc = int(data_dict['classes'])  # number of classes
 
     # Initialize model
-    model = Darknet(cfg,hyp).to(device)
+    model = Darknet(cfg,hyp,transfer=True).to(device)
     if opt.transfer:
         for name,param in model.named_parameters():
             if not name.split('.')[0]=="depth_pred":
@@ -70,8 +76,8 @@ def train(
             else:
                 print(name)
     # Optimizer
-    optimizer = optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
-#    optimizer = optim.Adam(model.parameters(), lr=hyp['lr0'],  weight_decay=hyp['weight_decay'])
+#    optimizer = optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'],  weight_decay=hyp['weight_decay'])
 
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
@@ -175,7 +181,11 @@ def train(
     
     for epoch in range(start_epoch, epochs):
         model.train()
-        
+        model.transfer=True
+        if opt.transfer:
+            model.eval()
+            model.depth_pred.train()
+
         with open(log_path, 'a') as logfile:
             logfile.write("Epoch: %i"%epoch)
 
@@ -194,6 +204,9 @@ def train(
         
         
         for i, (imgs, targets, paths, _) in enumerate(dataloader):
+#            if i>0:
+#                check_updated_grad(previous_state_dict,model)
+            previous_state_dict=model.state_dict()
             imgs = imgs.to(device)
             if imgs.shape[0]<torch.cuda.device_count():
                 continue
@@ -276,7 +289,7 @@ def train(
             if (i + 1) % accumulate == 0 or (i + 1) == nb:
                 optimizer.step()
                 optimizer.zero_grad()
-
+            
             # Print batch results
             mloss = (mloss * i + loss_items.cpu()) / (i + 1)  # update mean losses
             # s = ('%8s%12s' + '%10.3g' * 7) % ('%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), time.time() - t)
@@ -387,17 +400,17 @@ def print_mutation(hyp, results):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=2,
+    parser.add_argument('--batch-size', type=int, default=3,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=2, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
-    parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=608, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=True, help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=0, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')

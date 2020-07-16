@@ -25,6 +25,7 @@ def test(
 
         # Initialize model
         model = Darknet(cfg, img_size).to(device)
+        
 
         # Load weights
         if weights.endswith('.pt'):  # pytorch format
@@ -38,6 +39,7 @@ def test(
         device = next(model.parameters()).device  # get model device
 
     # Configure run
+    model.transfer=False
     data_cfg = parse_data_cfg(data_cfg)
     nc = int(data_cfg['classes'])  # number of classes
     test_path = data_cfg['valid']  # path to test images
