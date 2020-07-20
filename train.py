@@ -23,7 +23,7 @@ hyp = {'giou': 1.666,  # giou loss gain
        'obj_pw': 8.338,  # obj BCELoss positive_weight
        'iou_t': 0.2705,  # iou target-anchor training threshold
 #       'lr0': 0.001,  # initial learning rate
-       'lr0': 0.00001,  # initial learning rate
+       'lr0': 0.001,  # initial learning rate
        'lrf': -4.,  # final learning rate = lr0 * (10 ** lrf)
        'momentum': 0.90,  # SGD momentum
        'weight_decay': 0.0005}  # optimizer weight decay
@@ -134,7 +134,7 @@ def train(
                                   rect=opt.rect)  # rectangular training
 
     # Initialize distributed training
-    if torch.cuda.device_count() > 1:
+    if torch.cuda.device_count() > 0:
         with open(log_path, 'w') as logfile:
             logfile.write("nb GPU : %i\n"%torch.cuda.device_count())
         dist.init_process_group(backend='nccl',  # 'distributed backend'
@@ -180,11 +180,14 @@ def train(
 
     
     for epoch in range(start_epoch, epochs):
-        model.train()
+#        model.train()
         model.transfer=True
         if opt.transfer:
             model.eval()
-            model.depth_pred.train()
+            if type(model) is nn.parallel.DistributedDataParallel:
+                model.module.depth_pred.train()
+            else:
+                model.depth_pred.train()
 
         with open(log_path, 'a') as logfile:
             logfile.write("Epoch: %i"%epoch)
@@ -317,7 +320,7 @@ def train(
                 
                 if type(model) is nn.parallel.DistributedDataParallel:
                 
-                    results, maps = test.test(cfg, data_cfg, batch_size=1, img_size=opt.img_size,
+                    results, maps = test.test(cfg, data_cfg, batch_size=3, img_size=opt.img_size,
                                               model=model.module,
                                               conf_thres=0.1)
                 else:
