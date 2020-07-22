@@ -134,7 +134,7 @@ def train(
                                   rect=opt.rect)  # rectangular training
 
     # Initialize distributed training
-    if torch.cuda.device_count() > 0:
+    if torch.cuda.device_count() > 1:
         with open(log_path, 'w') as logfile:
             logfile.write("nb GPU : %i\n"%torch.cuda.device_count())
         dist.init_process_group(backend='nccl',  # 'distributed backend'
@@ -150,7 +150,7 @@ def train(
                             batch_size=batch_size,
                             num_workers=opt.num_workers,
                             shuffle=not opt.rect,  # Shuffle=True unless rectangular training is used
-                            pin_memory=False,
+                            pin_memory=True,
                             collate_fn=dataset.collate_fn)
 #                            sampler=sampler)
 
@@ -180,9 +180,9 @@ def train(
 
     
     for epoch in range(start_epoch, epochs):
-#        model.train()
-        model.transfer=True
+        model.train()
         if opt.transfer:
+            model.transfer=True
             model.eval()
             if type(model) is nn.parallel.DistributedDataParallel:
                 model.module.depth_pred.train()
@@ -202,14 +202,11 @@ def train(
                 if int(name.split('.')[1]) < cutoff:  # if layer < 75
                     p.requires_grad = False if epoch == 0 else True
 
-        mloss = torch.zeros(7)  # mean losses
+        mloss = torch.zeros(8)  # mean losses
         
         
         
         for i, (imgs, targets, paths, _) in enumerate(dataloader):
-#            if i>0:
-#                check_updated_grad(previous_state_dict,model)
-            previous_state_dict=model.state_dict()
             imgs = imgs.to(device)
             if imgs.shape[0]<torch.cuda.device_count():
                 continue
@@ -297,7 +294,7 @@ def train(
             mloss = (mloss * i + loss_items.cpu()) / (i + 1)  # update mean losses
             # s = ('%8s%12s' + '%10.3g' * 7) % ('%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), time.time() - t)
             for x in optimizer.param_groups:
-                s = ('%8s%12s' + '%10.3g' * 10) % (
+                s = ('%8s%12s' + '%10.3g' * 11) % (
                     '%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), img_size, x['lr'])
             del pred,pred_center
             t = time.time()
@@ -328,15 +325,15 @@ def train(
                                               model=model,
                                               conf_thres=0.1)
 
-        # Write epoch results
-        with open(result_path, 'a') as file:
-            file.write(s + '%11.3g' * 7 % results + '\n')  # P, R, mAP, F1, test_loss
+            # Write epoch results
+            with open(result_path, 'a') as file:
+                file.write(s + '%11.3g' * 9 % results + '\n')  # P, R, mAP, F1, test_loss, center_abs_err, dconf_loss, depth_abs_err, "real" depth_abs_err
 
-        # Update best map
-        fitness = results[-1]
-        if fitness < best_fitness:
-            print("best error replaced by %f"%fitness)
-            best_fitness = fitness
+            # Update best map
+            fitness = results[-1]
+            if fitness < best_fitness:
+                print("best error replaced by %f"%fitness)
+                best_fitness = fitness
 
         # Update best loss
 #        fitness = results[4]
@@ -377,7 +374,7 @@ def train(
         
 #            torch.cuda.empty_cache()
         # Delete checkpoint
-        del chkpt
+#        del chkpt
     with open(log_path, 'a') as logfile:
         logfile.write("ending \n")
     return results
@@ -403,7 +400,7 @@ def print_mutation(hyp, results):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=3,
+    parser.add_argument('--batch-size', type=int, default=1,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=2, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')

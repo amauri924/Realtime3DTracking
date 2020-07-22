@@ -211,17 +211,18 @@ class Top_layer(nn.Module):
         return modules
 
 class Depth_Layer(nn.Module):
-    def __init__(self,nc):
+    def __init__(self,nc,num_bin):
         super(Depth_Layer, self).__init__()
         self.nc=nc
+        self.num_bin=num_bin
         self.module_list=self.init_mod()
-        self.linear=nn.Linear(in_features=2048, out_features=1*self.nc, bias=True)
+        self.linear=nn.Linear(in_features=2048, out_features=2*self.nc*self.num_bin, bias=True)
 
 
     def forward(self,x):
         x=self.module_list(x)
         x=x.mean(3).mean(2)
-        x=self.linear(x)
+        x=self.linear(x).view(-1,self.nc,self.num_bin,2)
         return x
         
     def init_mod(self):
@@ -321,13 +322,13 @@ class Darknet(nn.Module):
 
     def __init__(self, cfg,hyp,transfer=False, img_size=(416, 416)):
         super(Darknet, self).__init__()
-
+        self.num_bin=20
         self.Yolov3=Yolov3(cfg,img_size)
         self.nc=int(self.Yolov3.module_defs[-1]['classes']) #Get num classes
         self.featurePooling=RoiAlign()
         
         self.top_layer=Top_layer()
-        self.depth_pred=Depth_Layer(self.nc)
+        self.depth_pred=Depth_Layer(self.nc,self.num_bin)
         self.center_prediction=center_pred(self.nc)
         self.transfer=transfer
         self.hyp=hyp

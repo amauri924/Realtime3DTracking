@@ -61,6 +61,8 @@ def test(
     jdict, stats, ap, ap_class = [], [], [], []
     center_abs_err=[]
     depth_abs_err=[]
+    loss_dconf=[]
+    real_depth_abs_err=[]
     for batch_i, (imgs, targets, paths, shapes) in enumerate(dataloader):
 
         
@@ -150,16 +152,32 @@ def test(
                 
                 #Compute 3D center error + depth error
                 if len(detected)>0:
+                    bceloss=nn.BCEWithLogitsLoss(reduction='sum')
+                    depth_bin=[8.276697070023026015e+00,1.367030265751999352e+01,1.850807181162805648e+01,
+                               2.308429273529717562e+01,2.746498505563442905e+01,3.152283586591682152e+01,
+                               3.630119571170291692e+01,4.108144314489631910e+01,4.517331684657505519e+01,
+                               4.939951426947290258e+01,5.397976889977083204e+01,5.922285549060714516e+01,
+                               6.619226558624747270e+01,7.419084940458591859e+01,8.354946940654028253e+01,
+                               9.471152210235592861e+01,1.061772677772923288e+02,1.185995899547230152e+02,
+                               1.318623873392741075e+02,1.504106140136718750e+02] #Create the depth bin centers. The bin width is 24m
                     for idx_pred,idx_target in detected:
-                        target_center=tcent[idx_target].clone()
-                        predicted_center=center_pred[idx_pred].clone()
+                        target_center=tcent[idx_target]
+                        predicted_center=center_pred[idx_pred]
                         
-                        target_depth=tdepth[idx_target].clone()
-                        predicted_depth=depth_pred[idx_pred].clone()
+                        gt_depth=tdepth[idx_target]
+                        predicted_depth=depth_pred[idx_pred]
+                        
+                        dtarget=torch.zeros(len(depth_bin)).to(gt_depth.device)
+                        for i,d_bin in enumerate(depth_bin):
+                            dtarget[i]=gt_depth-d_bin
+                        tconf_depth=(abs(dtarget)<12).type(torch.float)
                         
                         obj_cls=int(tcls[idx_target])
                         predicted_center=predicted_center[obj_cls:obj_cls+2]
-                        predicted_depth=predicted_depth[obj_cls:obj_cls+1]
+                        
+                        depth_pconf=predicted_depth[obj_cls,:,1]
+                        p_depth=predicted_depth[obj_cls:obj_cls+1,torch.min(abs(dtarget),0)[1],0]*200+depth_bin[torch.min(abs(dtarget),0)[1]] #use GT to get the bin that is closer to the gt depth
+                        real_p_depth=predicted_depth[obj_cls:obj_cls+1,torch.max(depth_pconf,0)[1],0]*200+depth_bin[torch.max(depth_pconf,0)[1]]
                         
                         w_bbox=pred[idx_pred][2].cpu().item()-pred[idx_pred][0].cpu().item()
                         h_bbox=pred[idx_pred][3].cpu().item()-pred[idx_pred][1].cpu().item()
@@ -169,9 +187,10 @@ def test(
                         predicted_center[0]=predicted_center[0]*w_bbox+centerbbox_x
                         predicted_center[1]=predicted_center[1]*h_bbox+centerbbox_y
                         
+                        loss_dconf.append(bceloss(depth_pconf,tconf_depth)) #compute BCE loss for the conf
                         center_abs_err.append(torch.mean(torch.tensor([abs(abs(predicted_center[0]-target_center[0])/target_center[0]),abs(abs(predicted_center[1]-target_center[1])/target_center[1])])))
-                        depth_abs_err.append(abs(abs(predicted_depth*200-target_depth)/((predicted_depth+0.00001)*200)))
-                        
+                        depth_abs_err.append(abs(abs(p_depth[0]-gt_depth)/(p_depth[0]+0.00001)))
+                        real_depth_abs_err.append(abs(abs(real_p_depth[0]-gt_depth)/(real_p_depth[0]+0.00001)))
                 
                 
             # Append statistics (correct, conf, pcls, tcls)
@@ -201,12 +220,14 @@ def test(
     if len(center_abs_err)>0:
         center_abs_err=torch.mean(torch.tensor(center_abs_err)).cpu().item()
         depth_abs_err=torch.mean(torch.tensor(depth_abs_err)).cpu().item()
+        real_depth_abs_err=torch.mean(torch.tensor(real_depth_abs_err)).cpu().item()
+        loss_dconf=torch.mean(torch.tensor(loss_dconf)).cpu().item()
     else:
         center_abs_err=0
         depth_abs_err=0
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
-    return (mp, mr, map, mf1, loss / len(dataloader), center_abs_err,depth_abs_err), maps
+    return (mp, mr, map, mf1, loss / len(dataloader), center_abs_err,loss_dconf,depth_abs_err,real_depth_abs_err), maps
 
 
 if __name__ == '__main__':

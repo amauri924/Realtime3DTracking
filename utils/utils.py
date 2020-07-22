@@ -271,9 +271,9 @@ def wh_iou(box1, box2):
     return inter_area / union_area  # iou
 
 
-def compute_loss(p,p_center,p_depth, targets, model,img_shape, giou_loss=True):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True):  # predictions, targets, model
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
-    lxy, lwh, lcls, lobj, lcent, ldepth = ft([0]), ft([0]), ft([0]), ft([0]), ft([0]), ft([0])
+    lxy, lwh, lcls, lobj, lcent, ldepth,lconf_depth = ft([0]), ft([0]), ft([0]), ft([0]), ft([0]), ft([0]),ft([0])
     txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
 
     if type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel):
@@ -284,10 +284,19 @@ def compute_loss(p,p_center,p_depth, targets, model,img_shape, giou_loss=True): 
     # Define criteria
     MSE = nn.MSELoss(reduction='sum')
     BCEcls = nn.BCEWithLogitsLoss(pos_weight=ft([h['cls_pw']]), reduction='sum')
+    BCEdepth = nn.BCEWithLogitsLoss(pos_weight=ft([1]), reduction='sum')
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=ft([h['obj_pw']]), reduction='sum')
     L1loss=torch.nn.L1Loss()
     # CE = nn.CrossEntropyLoss()  # (weight=model.class_weights)
-
+    
+    depth_bin=[8.276697070023026015e+00,1.367030265751999352e+01,1.850807181162805648e+01,
+               2.308429273529717562e+01,2.746498505563442905e+01,3.152283586591682152e+01,
+               3.630119571170291692e+01,4.108144314489631910e+01,4.517331684657505519e+01,
+               4.939951426947290258e+01,5.397976889977083204e+01,5.922285549060714516e+01,
+               6.619226558624747270e+01,7.419084940458591859e+01,8.354946940654028253e+01,
+               9.471152210235592861e+01,1.061772677772923288e+02,1.185995899547230152e+02,
+               1.318623873392741075e+02,1.504106140136718750e+02]
+    
     # Compute losses
     bs = p[0].shape[0]  # batch size
     k = 3 * bs / 64  # loss gain
@@ -326,14 +335,26 @@ def compute_loss(p,p_center,p_depth, targets, model,img_shape, giou_loss=True): 
         lobj += BCEobj(pi0[..., 4], tobj)  # obj loss
     pcent= p_center #Associated 3D centers
     pcent=torch.cat([pcent.view(pcent.shape[0],-1,2)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,2) #Select center prediction corresponding to the target class
-    p_depth=torch.cat([p_depth.view(p_depth.shape[0],-1,1)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,1) #Select center prediction corresponding to the target class
+    gt_depth=targets[:,8].clone().view(-1,1)*200
+    target_depth=torch.zeros(gt_depth.shape[0],len(depth_bin)).to(gt_depth.device)
+
+    
+    for i,d_bin in enumerate(depth_bin):
+        target_depth[:,i]=gt_depth[:,0]-d_bin
+    tconf_depth=(abs(target_depth)<12).type(torch.float)
+    bin_in_range=abs(target_depth)<12 #Select the bins which are in range of the target. Bins width = 24
+    target_depth/=200
+    pconf_depth=torch.cat([pred_depth[idx,int(index),:,1] for idx,index in enumerate(targets[:,1])]).view(-1,len(depth_bin)) 
+    p_depth=torch.cat([pred_depth[idx,int(index),:,0] for idx,index in enumerate(targets[:,1])]).view(-1,len(depth_bin))#Select center prediction corresponding to the target class
+    target_depth=target_depth[bin_in_range] #Risk of mem leak
+    p_depth=p_depth[bin_in_range]
     rois=targets[:,2:6].clone() # Rois closest to anchors 
     rois[:,0]*=img_shape[0]
     rois[:,2]*=img_shape[0]
     rois[:,1]*=img_shape[1]
     rois[:,3]*=img_shape[1]
     
-    target_depth=targets[:,8].clone().view(-1,1)
+    
     
     target_cent=targets[:,6:8].clone()
     target_cent[:,0]*=img_shape[0]
@@ -348,11 +369,13 @@ def compute_loss(p,p_center,p_depth, targets, model,img_shape, giou_loss=True): 
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
     lcent += ((bs))*10*L1loss(pcent,target_cent)
-    ldepth += 3*bs*L1loss(p_depth,target_depth)
+    lconf_depth+= BCEdepth(pconf_depth, tconf_depth)
+    ldepth += 100*bs*L1loss(p_depth,target_depth)
 #    loss = lxy + lwh + lobj + lcls + lcent + ldepth
-    loss=ldepth
+    loss=lconf_depth+ldepth
 
-    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth, loss)).detach()
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,lconf_depth,ldepth, loss)).detach()
+
 
 
 def build_targets(model, targets):
