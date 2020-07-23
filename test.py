@@ -153,13 +153,12 @@ def test(
                 #Compute 3D center error + depth error
                 if len(detected)>0:
                     bceloss=nn.BCEWithLogitsLoss(reduction='sum')
-                    depth_bin=[8.276697070023026015e+00,1.367030265751999352e+01,1.850807181162805648e+01,
-                               2.308429273529717562e+01,2.746498505563442905e+01,3.152283586591682152e+01,
-                               3.630119571170291692e+01,4.108144314489631910e+01,4.517331684657505519e+01,
-                               4.939951426947290258e+01,5.397976889977083204e+01,5.922285549060714516e+01,
-                               6.619226558624747270e+01,7.419084940458591859e+01,8.354946940654028253e+01,
-                               9.471152210235592861e+01,1.061772677772923288e+02,1.185995899547230152e+02,
-                               1.318623873392741075e+02,1.504106140136718750e+02] #Create the depth bin centers. The bin width is 24m
+                    depth_bin=[1.662120213105634647e+01,
+                   3.226488398501740562e+01,
+                   5.094282679935143676e+01,
+                   7.380026966365950614e+01,
+                   1.111202708277208160e+02
+                   ] #Create the depth bin centers. The bin width is 24m
                     for idx_pred,idx_target in detected:
                         target_center=tcent[idx_target]
                         predicted_center=center_pred[idx_pred]
@@ -170,7 +169,7 @@ def test(
                         dtarget=torch.zeros(len(depth_bin)).to(gt_depth.device)
                         for i,d_bin in enumerate(depth_bin):
                             dtarget[i]=gt_depth-d_bin
-                        tconf_depth=(abs(dtarget)<12).type(torch.float)
+                        tconf_depth=(abs(dtarget)<24).type(torch.float)
                         
                         obj_cls=int(tcls[idx_target])
                         predicted_center=predicted_center[obj_cls:obj_cls+2]
@@ -235,7 +234,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/latest_2.1.pt', help='path to weights file')
+    parser.add_argument('--weights', type=str, default='weights/best_1.1.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.5, help='iou threshold for non-maximum suppression')

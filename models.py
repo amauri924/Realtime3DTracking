@@ -216,13 +216,15 @@ class Depth_Layer(nn.Module):
         self.nc=nc
         self.num_bin=num_bin
         self.module_list=self.init_mod()
-        self.linear=nn.Linear(in_features=2048, out_features=2*self.nc*self.num_bin, bias=True)
+#        self.linear1=nn.Linear(in_features=2048, out_features=2048, bias=True)
+        self.linear2=nn.Linear(in_features=2048, out_features=2*self.nc*self.num_bin, bias=True)
 
 
     def forward(self,x):
         x=self.module_list(x)
         x=x.mean(3).mean(2)
-        x=self.linear(x).view(-1,self.nc,self.num_bin,2)
+#        x=self.linear1(x)
+        x=self.linear2(x).view(-1,self.nc,self.num_bin,2)
         return x
         
     def init_mod(self):
@@ -322,7 +324,7 @@ class Darknet(nn.Module):
 
     def __init__(self, cfg,hyp,transfer=False, img_size=(416, 416)):
         super(Darknet, self).__init__()
-        self.num_bin=20
+        self.num_bin=5
         self.Yolov3=Yolov3(cfg,img_size)
         self.nc=int(self.Yolov3.module_defs[-1]['classes']) #Get num classes
         self.featurePooling=RoiAlign()

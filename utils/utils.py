@@ -289,13 +289,12 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True
     L1loss=torch.nn.L1Loss()
     # CE = nn.CrossEntropyLoss()  # (weight=model.class_weights)
     
-    depth_bin=[8.276697070023026015e+00,1.367030265751999352e+01,1.850807181162805648e+01,
-               2.308429273529717562e+01,2.746498505563442905e+01,3.152283586591682152e+01,
-               3.630119571170291692e+01,4.108144314489631910e+01,4.517331684657505519e+01,
-               4.939951426947290258e+01,5.397976889977083204e+01,5.922285549060714516e+01,
-               6.619226558624747270e+01,7.419084940458591859e+01,8.354946940654028253e+01,
-               9.471152210235592861e+01,1.061772677772923288e+02,1.185995899547230152e+02,
-               1.318623873392741075e+02,1.504106140136718750e+02]
+    depth_bin=[1.662120213105634647e+01,
+               3.226488398501740562e+01,
+               5.094282679935143676e+01,
+               7.380026966365950614e+01,
+               1.111202708277208160e+02
+               ]
     
     # Compute losses
     bs = p[0].shape[0]  # batch size
@@ -341,8 +340,8 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True
     
     for i,d_bin in enumerate(depth_bin):
         target_depth[:,i]=gt_depth[:,0]-d_bin
-    tconf_depth=(abs(target_depth)<12).type(torch.float)
-    bin_in_range=abs(target_depth)<12 #Select the bins which are in range of the target. Bins width = 24
+    tconf_depth=(abs(target_depth)<24).type(torch.float)
+    bin_in_range=abs(target_depth)<24 #Select the bins which are in range of the target. Bins width = 48
     target_depth/=200
     pconf_depth=torch.cat([pred_depth[idx,int(index),:,1] for idx,index in enumerate(targets[:,1])]).view(-1,len(depth_bin)) 
     p_depth=torch.cat([pred_depth[idx,int(index),:,0] for idx,index in enumerate(targets[:,1])]).view(-1,len(depth_bin))#Select center prediction corresponding to the target class

@@ -51,7 +51,7 @@ plt.figure()
 plt.scatter(np.linspace(0,len(depth_list),num=len(depth_list),dtype=np.uint16),depth_list)
 plt.show()
 #Cluster K-means
-model=KMeans(n_clusters=20)
+model=KMeans(n_clusters=5)
 #adapter le modèle de données
 model.fit(depth_list)
 cluster_centers=model.cluster_centers_
