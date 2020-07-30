@@ -33,13 +33,16 @@ def test(
         else:  # darknet format
             _ = load_darknet_weights(model, weights)
 
-        if torch.cuda.device_count() > 1:
+        if torch.cuda.device_count() > 0:
             model = nn.DataParallel(model)
     else:
         device = next(model.parameters()).device  # get model device
 
     # Configure run
-    model.transfer=False
+#    if type(model) is nn.parallel.DistributedDataParallel:
+#        model.module.transfer=False
+#    else:
+#        model.transfer=False
     data_cfg = parse_data_cfg(data_cfg)
     nc = int(data_cfg['classes'])  # number of classes
     test_path = data_cfg['valid']  # path to test images
@@ -49,7 +52,7 @@ def test(
     dataset = LoadImagesAndLabels(test_path, img_size, batch_size)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            num_workers=0,
+                            num_workers=28,
                             pin_memory=True,
                             collate_fn=dataset.collate_fn)
 
@@ -73,9 +76,10 @@ def test(
         # Plot images with bounding boxes
 #        if batch_i == 0 and not os.path.exists('test_batch0.jpg'):
 #            plot_images(imgs=imgs, targets=targets, paths=paths, fname='test_batch0.jpg')
-
+#        if imgs.shape[0]!=batch_size:
+#            continue  # inference and training outputs
         # Run model
-        output, center_pred_list, depth_pred_list = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres)  # inference and training outputs
+        output, center_pred_list, depth_pred_list = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True)  # inference and training outputs
 
 
 
@@ -91,7 +95,7 @@ def test(
             tcls = labels[:, 0].tolist() if nl else []  # target class
             seen += 1
 
-            if pred is None:
+            if len(pred)==0:
                 if nl:
                     stats.append(([], torch.Tensor(), torch.Tensor(), tcls))
                 continue
@@ -217,29 +221,31 @@ def test(
     # Return results
     maps = np.zeros(nc) + map
     if len(center_abs_err)>0:
-        center_abs_err=torch.mean(torch.tensor(center_abs_err)).cpu().item()
-        depth_abs_err=torch.mean(torch.tensor(depth_abs_err)).cpu().item()
-        real_depth_abs_err=torch.mean(torch.tensor(real_depth_abs_err)).cpu().item()
+        center_abs_err=torch.mean(torch.tensor(center_abs_err)[torch.isfinite(torch.tensor(center_abs_err))]).cpu().item()
+        depth_abs_err=torch.mean(torch.tensor(depth_abs_err)[torch.isfinite(torch.tensor(depth_abs_err))]).cpu().item()
+        mean_real_depth_abs_err=torch.mean(torch.tensor(real_depth_abs_err)[torch.isfinite(torch.tensor(real_depth_abs_err))]).cpu().item()
+        if math.isnan(mean_real_depth_abs_err):
+            print("nan")
         loss_dconf=torch.mean(torch.tensor(loss_dconf)).cpu().item()
     else:
         center_abs_err=0
         depth_abs_err=0
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
-    return (mp, mr, map, mf1, loss / len(dataloader), center_abs_err,loss_dconf,depth_abs_err,real_depth_abs_err), maps
+    return (mp, mr, map, mf1, loss / len(dataloader), center_abs_err,loss_dconf,depth_abs_err,mean_real_depth_abs_err), maps
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
+    parser.add_argument('--batch-size', type=int, default=12, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best_1.1.pt', help='path to weights file')
+    parser.add_argument('--weights', type=str, default='weights/best_1.8.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.5, help='iou threshold for non-maximum suppression')
     parser.add_argument('--save-json', default=False, help='save a cocoapi-compatible JSON results file')
-    parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=608, help='inference size (pixels)')
     opt = parser.parse_args()
     print(opt)
 

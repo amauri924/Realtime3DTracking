@@ -128,9 +128,9 @@ def detect(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best_1.5.pt', help='path to weights file')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
+    parser.add_argument('--weights', type=str, default='weights/best_1.8.pt', help='path to weights file')
     parser.add_argument('--images', type=str, default='data/samples', help='path to images')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='object confidence threshold')

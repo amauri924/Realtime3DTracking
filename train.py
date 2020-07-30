@@ -48,12 +48,12 @@ def train(
         freeze_backbone=False
 ):
     idx_train=str(batch_size)+'.'+str(accumulate)
-    log_path='log_'+idx_train+'.txt'
-    result_path='result_'+idx_train+'.txt'
+    log_path='log_'+idx_train+str(opt.run_id)+'.txt'
+    result_path='result_'+idx_train+str(opt.run_id)+'.txt'
     init_seeds()
     weights = 'weights' + os.sep
-    latest = weights + 'latest_'+idx_train+'.pt'
-    best = weights + 'best_'+idx_train+'.pt'
+    latest = weights + 'latest_'+idx_train+str(opt.run_id)+'.pt'
+    best = weights + 'best_'+idx_train+str(opt.run_id)+'.pt'
     device = torch_utils.select_device()
     multi_scale = True
 
@@ -71,10 +71,14 @@ def train(
     model = Darknet(cfg,hyp,transfer=True).to(device)
     if opt.transfer:
         for name,param in model.named_parameters():
-            if not name.split('.')[0]=="depth_pred":
+            if not name.split('.')[0]=="depth_pred" and not name.split('.')[0]=="Yolov3":
+                
                 param.requires_grad = False
             else:
-                print(name)
+                if name.split('.')[0]=="Yolov3" and int(name.split('.')[2])>-1:
+                    param.requires_grad = False
+                else:
+                    print(name)
     # Optimizer
 #    optimizer = optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'],  weight_decay=hyp['weight_decay'])
@@ -83,7 +87,7 @@ def train(
     start_epoch = 0
     best_fitness = 1000
     if opt.resume or opt.transfer:  # Load previously saved model
-        if opt.transfer:  # Transfer learning
+        if opt.transfer and not opt.resume:  # Transfer learning
 #            nf = int(model.module_defs[model.yolo_layers[0] - 1]['filters'])  # yolo layer size (i.e. 255)
             chkpt = torch.load(weights + 'NuScene.pt', map_location=device)
             model_state=[k for k,v in model.state_dict().items()]
@@ -95,16 +99,16 @@ def train(
         else:  # resume from latest.pt
             if opt.bucket:
                 os.system('gsutil cp gs://%s/latest.pt %s' % (opt.bucket, latest))  # download from bucket
-            chkpt = torch.load(best, map_location=device)  # load checkpoint
+            chkpt = torch.load(latest, map_location=device)  # load checkpoint
             model.load_state_dict(chkpt['model'])
 
         if chkpt['optimizer'] is not None:
-            if opt.transfer==False:
+            if opt.resume:
                 optimizer.load_state_dict(chkpt['optimizer'])
                 best_fitness = chkpt['best_fitness']
 
         if chkpt['training_results'] is not None:
-            with open('results.txt', 'w') as file:
+            with open('results_'+str(opt.run_id)+'.txt', 'w') as file:
                 file.write(chkpt['training_results'])  # write results.txt
 
         start_epoch = chkpt['epoch'] + 1
@@ -121,7 +125,8 @@ def train(
             os.remove(f)
 
 
-    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[round(opt.epochs * x) for x in (0.8, 0.9)], gamma=0.1)
+#    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[round(opt.epochs * x) for x in (0.8, 0.9)], gamma=0.1)
+    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min',verbose=True)
     scheduler.last_epoch = start_epoch - 1
 
 
@@ -160,6 +165,7 @@ def train(
         try:
             from apex import amp
             model, optimizer = amp.initialize(model, optimizer, opt_level='O1', verbosity=0)
+            print("using mixed precision")
         except:  # not installed: install help: https://github.com/NVIDIA/apex/issues/259
             mixed_precision = False
 
@@ -178,23 +184,27 @@ def train(
         
         #Freezing layer
 
-    
+
     for epoch in range(start_epoch, epochs):
+        loss_scheduler=[]
         model.train()
         if opt.transfer:
             model.transfer=True
             model.eval()
             if type(model) is nn.parallel.DistributedDataParallel:
                 model.module.depth_pred.train()
+                model.module.featurePooling.train()
             else:
                 model.depth_pred.train()
+                model.featurePooling.train()
+#                model.Yolov3.train()
 
         with open(log_path, 'a') as logfile:
             logfile.write("Epoch: %i"%epoch)
 
         # Update scheduler
-        if epoch>0:
-            scheduler.step()
+#        if epoch>0:
+#            scheduler.step(loss_scheduler)
         
         # Freeze backbone at epoch 0, unfreeze at epoch 1 (optional)
         if freeze_backbone and epoch < 2:
@@ -208,6 +218,10 @@ def train(
         
         for i, (imgs, targets, paths, _) in enumerate(dataloader):
             imgs = imgs.to(device)
+            
+            if opt.depth_aug:
+                targets=rois_augmentation_for_depth(targets,0.2,0.02)
+                
             if imgs.shape[0]<torch.cuda.device_count():
                 continue
             if imgs.shape[0]!=opt.batch_size:
@@ -229,13 +243,18 @@ def train(
                 scale_factor = img_size / max(imgs.shape[-2:])
                 imgs = F.interpolate(imgs, scale_factor=scale_factor, mode='bilinear', align_corners=False)
                 
-
+            
+            #xywh€[0,1] to xyxy in pixels
             input_targets[:, [2+1, 4+1]] *= imgs.shape[2]
             input_targets[:, [1+1, 3+1]] *= imgs.shape[3]
-            input_targets[:,2]=input_targets[:,2]-input_targets[:,4]/2
-            input_targets[:,4]=input_targets[:,2]+input_targets[:,4]/2
-            input_targets[:,3]=input_targets[:,3]-input_targets[:,5]/2
-            input_targets[:,5]=input_targets[:,3]+input_targets[:,5]/2
+            x_centers=input_targets[:,2].copy()
+            y_centers=input_targets[:,3].copy()
+            w=input_targets[:,4].copy()
+            h=input_targets[:,5].copy()
+            input_targets[:,2]=x_centers-w/2
+            input_targets[:,4]=x_centers+w/2
+            input_targets[:,3]=y_centers-h/2
+            input_targets[:,5]=y_centers+h/2
 
             # SGD burn-in
             if epoch == 0 and i <= n_burnin:
@@ -243,7 +262,7 @@ def train(
                 for x in optimizer.param_groups:
                     x['lr'] = lr
             
-            with open("log_time"+idx_train+".txt",'a') as f:
+            with open("log_time"+idx_train+str(opt.run_id)+".txt",'a') as f:
                 f.write("step %i\n"%i)
                 f.write('Paths:\n'+str(paths)+'\n')
             
@@ -252,7 +271,7 @@ def train(
             pred,pred_center,depth_pred = model(imgs,targets=input_targets)
             t_pred=time.time()-t_pred
             
-            with open("log_time"+idx_train+".txt",'a') as f:
+            with open("log_time"+idx_train+str(opt.run_id)+".txt",'a') as f:
                 f.write("tpred %f\n"%t_pred)
 
 
@@ -260,7 +279,7 @@ def train(
             try:
                 loss, loss_items = compute_loss(pred,pred_center,depth_pred, targets, model,imgs.shape[2:], giou_loss=not opt.xywh)
             except:
-                with open("debug.txt",'a') as f:
+                with open("debug_"+str(opt.run_id)+".txt",'a') as f:
                     f.write("error in loss\n")
                 continue
 #            if loss.cpu().item()>100:
@@ -280,7 +299,7 @@ def train(
             else:
                 loss.backward()
             t_back=time.time()-t_back
-            with open("log_time"+idx_train+".txt",'a') as f:
+            with open("log_time"+idx_train+str(opt.run_id)+".txt",'a') as f:
 
                 f.write("tback %f\n\n"%t_back)
 
@@ -292,6 +311,7 @@ def train(
             
             # Print batch results
             mloss = (mloss * i + loss_items.cpu()) / (i + 1)  # update mean losses
+            loss_scheduler.append(mloss[-1])
             # s = ('%8s%12s' + '%10.3g' * 7) % ('%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), time.time() - t)
             for x in optimizer.param_groups:
                 s = ('%8s%12s' + '%10.3g' * 11) % (
@@ -302,7 +322,9 @@ def train(
                     logfile.write(s+"\n")
 #            pbar.set_description(s)  # print(s)
 
-
+        loss_scheduler=torch.mean(torch.tensor(loss_scheduler)).item()
+        print("Epoch loss:"+str(loss_scheduler))
+        scheduler.step(loss_scheduler)
         # Report time
         dt = (time.time() - t0) / 3600
         with open(log_path, 'a') as logfile:
@@ -310,7 +332,7 @@ def train(
 #        torch.cuda.synchronize()
 
         # Calculate mAP (always test final epoch, skip first 5 if opt.nosave)
-        if not (opt.notest or (opt.nosave and epoch < 10)) or epoch == epochs - 1:
+        if (not (opt.notest or (opt.nosave and epoch < 10)) and epoch%1==0) or (epoch == epochs - 1):
             with open(log_path, 'a') as logfile:
                 logfile.write("testing \n")
             with torch.no_grad():
@@ -318,16 +340,24 @@ def train(
                 if type(model) is nn.parallel.DistributedDataParallel:
                 
                     results, maps = test.test(cfg, data_cfg, batch_size=3, img_size=opt.img_size,
-                                              model=model.module,
+                                              model=model,
+                                              conf_thres=0.1)
+                    results_training, _ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=3, img_size=opt.img_size,
+                                              model=model,
                                               conf_thres=0.1)
                 else:
                     results, maps = test.test(cfg, data_cfg, batch_size=1, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
-
+                    results_training, _ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=1, img_size=opt.img_size,
+                                              model=model,
+                                              conf_thres=0.1)
             # Write epoch results
             with open(result_path, 'a') as file:
                 file.write(s + '%11.3g' * 9 % results + '\n')  # P, R, mAP, F1, test_loss, center_abs_err, dconf_loss, depth_abs_err, "real" depth_abs_err
+
+            with open("result_training"+str(opt.run_id)+".txt", 'a') as file:
+                file.write('%g/%g' % (epoch, epochs - 1) + '%11.3g' * 4 % (results_training[-1], results[-1],mloss[-1].item(),results[2])+'\n')  #training_abs,test_abs,loss,mAP
 
             # Update best map
             fitness = results[-1]
@@ -343,7 +373,7 @@ def train(
 
 
         # Save training results
-        save = (not opt.nosave) or ((not opt.evolve) and (epoch == epochs - 1))
+        save = ((not opt.nosave) and (epoch%10==0)) or ((not opt.evolve) and (epoch == epochs - 1))
         if save:
             with open(log_path, 'a') as logfile:
                 logfile.write("saving...\n")
@@ -399,18 +429,20 @@ def print_mutation(hyp, results):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--run_id', default=str(time.time()).split(".")[0], help='number of epochs')
     parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=1,
+    parser.add_argument('--batch-size', type=int, default=64,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=8, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=608, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
+    parser.add_argument('--depth_aug', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=True, help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=28, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')

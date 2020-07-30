@@ -340,13 +340,17 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True
     
     for i,d_bin in enumerate(depth_bin):
         target_depth[:,i]=gt_depth[:,0]-d_bin
-    tconf_depth=(abs(target_depth)<24).type(torch.float)
+    tconf_depth=torch.zeros_like(target_depth)
+    tconf_depth[range(len(target_depth)),torch.min(abs(target_depth),1)[1]]=1.0
+#    tconf_depth=(abs(target_depth)<24).type(torch.float)
     bin_in_range=abs(target_depth)<24 #Select the bins which are in range of the target. Bins width = 48
     target_depth/=200
     pconf_depth=torch.cat([pred_depth[idx,int(index),:,1] for idx,index in enumerate(targets[:,1])]).view(-1,len(depth_bin)) 
     p_depth=torch.cat([pred_depth[idx,int(index),:,0] for idx,index in enumerate(targets[:,1])]).view(-1,len(depth_bin))#Select center prediction corresponding to the target class
     target_depth=target_depth[bin_in_range] #Risk of mem leak
     p_depth=p_depth[bin_in_range]
+    abs_rel_err_depth=torch.mean(abs(p_depth-target_depth)/abs(p_depth)).detach().cpu().item()
+#    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
     rois=targets[:,2:6].clone() # Rois closest to anchors 
     rois[:,0]*=img_shape[0]
     rois[:,2]*=img_shape[0]
@@ -748,3 +752,22 @@ def plot_results(start=0, stop=0):  # from utils.utils import *; plot_results()
     fig.tight_layout()
     ax[4].legend()
     fig.savefig('results.png', dpi=300)
+
+def rois_augmentation_for_depth(targets,sigma_shape,sigma_center):
+    new_targets=torch.cat((targets,targets.clone(),targets.clone(),targets.clone(),
+    targets.clone(),targets.clone(),targets.clone(),
+    targets.clone(),targets.clone(),targets.clone())) # rois augmentation for depth prediction
+
+    for i in range(len(targets),len(new_targets)):
+        sigma_shape=sigma_shape #Bbox width and height will be augmented with a max of 20% of their original value
+        sigma_center=sigma_center #Bbox 3d centers will be augmented with a max of 2% of their original value
+        h_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
+        w_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
+        x_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
+        y_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
+        new_targets[i,6]+=x_var*new_targets[i,6]
+        new_targets[i,7]+=y_var*new_targets[i,7]
+        new_targets[i,4]+=w_var*new_targets[i,4]
+        new_targets[i,5]+=h_var*new_targets[i,5]
+    new_targets[len(targets):,2:4]=new_targets[len(targets):,6:8] #Use 3D centers as center for the rois
+    return new_targets

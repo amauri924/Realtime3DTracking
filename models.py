@@ -216,21 +216,25 @@ class Depth_Layer(nn.Module):
         self.nc=nc
         self.num_bin=num_bin
         self.module_list=self.init_mod()
-#        self.linear1=nn.Linear(in_features=2048, out_features=2048, bias=True)
+#        self.linear1=nn.Linear(in_features=2048, out_features=1024, bias=True)
         self.linear2=nn.Linear(in_features=2048, out_features=2*self.nc*self.num_bin, bias=True)
-
+        self.avgpool=nn.AdaptiveMaxPool2d((4,4))
 
     def forward(self,x):
         x=self.module_list(x)
-        x=x.mean(3).mean(2)
+        x=self.avgpool(x).view(-1,2048)
 #        x=self.linear1(x)
         x=self.linear2(x).view(-1,self.nc,self.num_bin,2)
+        
+        if not self.training:
+            x[:,:,:,1]=torch.sigmoid(x[:,:,:,1])
         return x
         
     def init_mod(self):
+#        modules=nn.Sequential(Bottleneck(1024,256,stride=1),Bottleneck(1024,256,stride=1),Bottleneck(1024,256,stride=1),Bottleneck(1024,256,stride=1),Bottleneck(1024,256,stride=1),Bottleneck(1024,512,stride=2,downsample=downsample(1024,2048)),
+#                Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1))
         modules=nn.Sequential(Bottleneck(1024,512,stride=2,downsample=downsample(1024,2048)),
                 Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1))
-                              
         return modules
 
 class EmptyLayer(nn.Module):
@@ -257,7 +261,7 @@ class RoiAlign(nn.Module):
 #        if batch_idxs!=torch.tensor([]):
         if self.training:
             box[:,0]=batch_idxs
-        pooled_features=roi_align(features, box, (7,7), spatial_scale=1.0/32.0)
+        pooled_features=roi_align(features, box,(7,7), spatial_scale=1.0/32.0)
         
         del box
         return pooled_features
@@ -336,9 +340,12 @@ class Darknet(nn.Module):
         self.hyp=hyp
         self._init_weights()
 
-    def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0):
+    def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0,testing=False):
 
-        
+        if testing:
+            self.transfer=False
+        else:
+            self.transfer=True
         if not self.training and not self.transfer:
             _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
             io=[]
@@ -351,10 +358,11 @@ class Darknet(nn.Module):
             time_NMS=time.time()-time_NMS
             center_pred_list=[]
             depth_pred_list=[]
-            for roi in rois:
+            for i,roi in enumerate(rois):
                 if roi is None:
-                    center_pred_list.append(None)
-                    depth_pred_list.append(None)
+                    center_pred_list.append(torch.tensor([]).to(x.device).view(0,2*self.nc))
+                    depth_pred_list.append(torch.tensor([]).to(x.device).view(0,self.nc,self.num_bin,2))
+                    rois[i]=torch.tensor([]).to(x.device).view(0,7)
                     continue
                 pooled_features=self.featurePooling(features, roi)
                 depth_pred=self.depth_pred(pooled_features)
@@ -371,8 +379,9 @@ class Darknet(nn.Module):
             targets=targets.to(features.device)
             device_id=int(str(x.device)[-1])
             
-            #Compute 3D center using GT bbox
+            #Compute 3D center or object depth using GT bbox
             #For multi-gpu
+            
             new_idxs=targets[:,0]-device_id*x.shape[0]
             mask_1=new_idxs<x.shape[0]
             mask_2=new_idxs>-1
@@ -380,6 +389,7 @@ class Darknet(nn.Module):
             targets=targets[mask_3]
             
             roi=targets[:,2:6]
+            
             b=new_idxs[mask_3]
             pooled_features=self.featurePooling(features, roi,b)
             depth_pred=self.depth_pred(pooled_features)
