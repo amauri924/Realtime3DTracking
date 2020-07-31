@@ -109,7 +109,7 @@ def train(
             os.remove(f)
 
 
-    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[round(opt.epochs * x) for x in (0.8, 0.9)], gamma=0.1)
+    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min',verbose=True)
     scheduler.last_epoch = start_epoch - 1
 
 
@@ -143,11 +143,12 @@ def train(
 #                            sampler=sampler)
 
     # Mixed precision training https://github.com/NVIDIA/apex
-    mixed_precision = False
+    mixed_precision = True
     if mixed_precision:
         try:
             from apex import amp
             model, optimizer = amp.initialize(model, optimizer, opt_level='O1', verbosity=0)
+            print("using mixed precision")
         except:  # not installed: install help: https://github.com/NVIDIA/apex/issues/259
             mixed_precision = False
 
@@ -165,13 +166,11 @@ def train(
         logfile.write("nb epochs : %i\n"%epochs)
     for epoch in range(start_epoch, epochs):
         model.train()
+        loss_scheduler=[]
         
         with open(log_path, 'a') as logfile:
             logfile.write("Epoch: %i"%epoch)
 
-        # Update scheduler
-        if epoch>0:
-            scheduler.step()
 
         # Freeze backbone at epoch 0, unfreeze at epoch 1 (optional)
         if freeze_backbone and epoch < 2:
@@ -267,6 +266,7 @@ def train(
 
             # Print batch results
             mloss = (mloss * i + loss_items.cpu()) / (i + 1)  # update mean losses
+            loss_scheduler.append(mloss[-1])
             # s = ('%8s%12s' + '%10.3g' * 7) % ('%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), time.time() - t)
             for x in optimizer.param_groups:
                 s = ('%8s%12s' + '%10.3g' * 9) % (
@@ -277,7 +277,9 @@ def train(
                     logfile.write(s+"\n")
 #            pbar.set_description(s)  # print(s)
 
-
+        loss_scheduler=torch.mean(torch.tensor(loss_scheduler)).item()
+        print("Epoch loss:"+str(loss_scheduler))
+        scheduler.step(loss_scheduler)
         # Report time
         dt = (time.time() - t0) / 3600
         with open(log_path, 'a') as logfile:
@@ -285,20 +287,20 @@ def train(
 #        torch.cuda.synchronize()
 
         # Calculate mAP (always test final epoch, skip first 5 if opt.nosave)
-        if not (opt.notest or (opt.nosave and epoch < 10)) or epoch == epochs - 1:
+        if (not (opt.notest or (opt.nosave and epoch < 10)) and epoch%5==0) or (epoch == epochs - 1):
             with open(log_path, 'a') as logfile:
                 logfile.write("testing \n")
             with torch.no_grad():
                 
                 if type(model) is nn.parallel.DistributedDataParallel:
                 
-                    results, maps = test.test(cfg, data_cfg, batch_size=1, img_size=opt.img_size,
+                    results, maps = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                               model=model.module,
-                                              conf_thres=0.1)
+                                              conf_thres=0.001)
                 else:
-                    results, maps = test.test(cfg, data_cfg, batch_size=1, img_size=opt.img_size,
+                    results, maps = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
-                                              conf_thres=0.1)
+                                              conf_thres=0.001)
 
         # Write epoch results
         with open(result_path, 'a') as file:
@@ -307,6 +309,7 @@ def train(
         # Update best map
         fitness = results[2]
         if fitness > best_fitness:
+            print("best error replaced by %f"%fitness)
             best_fitness = fitness
 
         # Update best loss
@@ -317,7 +320,7 @@ def train(
 
 
         # Save training results
-        save = (not opt.nosave) or ((not opt.evolve) and (epoch == epochs - 1))
+        save = ((not opt.nosave) and (epoch%5==0)) or ((not opt.evolve) and (epoch == epochs - 1))
         if save:
             with open(log_path, 'a') as logfile:
                 logfile.write("saving...\n")
@@ -348,7 +351,7 @@ def train(
         
 #            torch.cuda.empty_cache()
         # Delete checkpoint
-        del chkpt
+
     with open(log_path, 'a') as logfile:
         logfile.write("ending \n")
     return results
@@ -374,9 +377,9 @@ def print_mutation(hyp, results):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=5,
+    parser.add_argument('--batch-size', type=int, default=4,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=10, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
@@ -384,7 +387,7 @@ if __name__ == '__main__':
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--transfer', action='store_true', help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=10, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')

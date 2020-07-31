@@ -303,12 +303,6 @@ def compute_loss(p,p_center, targets, model,img_shape, giou_loss=True):  # predi
             nt += nb
             pi = pi0[b, a, gj, gi]  # predictions closest to anchors
             
-            
-            #we use this for the 3d center losses
-
-#            tcent[i][:,0]/=rois[:,2]
-#            tcent[i][:,1]/=rois[:,3]
-            
             tobj[b, a, gj, gi] = 1.0  # obj
             # pi[..., 2:4] = torch.sigmoid(pi[..., 2:4])  # wh power loss (uncomment)
 
@@ -320,27 +314,11 @@ def compute_loss(p,p_center, targets, model,img_shape, giou_loss=True):  # predi
                 lxy += (k * h['xy']) * MSE(torch.sigmoid(pi[..., 0:2]), txy[i])  # xy loss
                 lwh += MSE(pi[..., 2:4], twh[i])  # wh yolo loss
 
-                        
-            
-#            lcent+=L1loss(pcent,tcent[i])
-            
-#            if torch.isnan(lcent).item():
-#                with open('nan.txt','a') as f:
-#                    f.write("Pred center: \n\n")
-#                    f.write(str(pcent))
-#                    
-#                    f.write("\n\nTargets: \n\n")
-#                    f.write(str(tcent[i]))
-            
             
             tclsm = torch.zeros_like(pi[..., 5:])
             tclsm[range(nb), tcls[i]] = 1.0
             lcls += BCEcls(pi[..., 5:], tclsm)  # cls loss (BCE)
-            # lcls += CE(pi[..., 5:], tcls[i])  # cls loss (CE)
 
-            # Append targets to text file
-            # with open('targets.txt', 'a') as file:
-            #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
 
         lobj += BCEobj(pi0[..., 4], tobj)  # obj loss
     pcent= p_center #Associated 3D centers

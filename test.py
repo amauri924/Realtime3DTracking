@@ -14,9 +14,8 @@ def test(
         weights=None,
         batch_size=16,
         img_size=416,
-        iou_thres=0.5,
-        conf_thres=0.1,
-        nms_thres=0.5,
+        iou_thres=0.6,
+        conf_thres=0.001,
         save_json=False,
         model=None
 ):
@@ -47,7 +46,7 @@ def test(
     dataset = LoadImagesAndLabels(test_path, img_size, batch_size)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            num_workers=0,
+                            num_workers=28,
                             pin_memory=True,
                             collate_fn=dataset.collate_fn)
 
@@ -72,7 +71,7 @@ def test(
 #            plot_images(imgs=imgs, targets=targets, paths=paths, fname='test_batch0.jpg')
 
         # Run model
-        output, center_pred_list = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres)  # inference and training outputs
+        output, center_pred_list = model(imgs,conf_thres=conf_thres, nms_thres=iou_thres)  # inference and training outputs
 
 
 
@@ -206,9 +205,8 @@ if __name__ == '__main__':
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent.data', help='coco.data file path')
     parser.add_argument('--weights', type=str, default='weights/best_1.1.pt', help='path to weights file')
-    parser.add_argument('--iou-thres', type=float, default=0.5, help='iou threshold required to qualify as detected')
-    parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
-    parser.add_argument('--nms-thres', type=float, default=0.5, help='iou threshold for non-maximum suppression')
+    parser.add_argument('--iou-thres', type=float, default=0.6, help='iou threshold required to qualify as detected')
+    parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--save-json', default=False, help='save a cocoapi-compatible JSON results file')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     opt = parser.parse_args()
@@ -222,5 +220,4 @@ if __name__ == '__main__':
                    opt.img_size,
                    opt.iou_thres,
                    opt.conf_thres,
-                   opt.nms_thres,
                    opt.save_json)
