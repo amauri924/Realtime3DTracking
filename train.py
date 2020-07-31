@@ -302,15 +302,15 @@ def train(
                                               model=model,
                                               conf_thres=0.001)
 
-        # Write epoch results
-        with open(result_path, 'a') as file:
-            file.write(s + '%11.3g' * 6 % results + '\n')  # P, R, mAP, F1, test_loss
+            # Write epoch results
+            with open(result_path, 'a') as file:
+                file.write(s + '%11.3g' * 6 % results + '\n')  # P, R, mAP, F1, test_loss
 
-        # Update best map
-        fitness = results[2]
-        if fitness > best_fitness:
-            print("best error replaced by %f"%fitness)
-            best_fitness = fitness
+            # Update best map
+            fitness = results[2]
+            if fitness > best_fitness:
+                print("best error replaced by %f"%fitness)
+                best_fitness = fitness
 
         # Update best loss
 #        fitness = results[4]
