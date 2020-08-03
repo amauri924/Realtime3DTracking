@@ -85,7 +85,7 @@ def train(
 
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
-    best_fitness = 1000
+    best_fitness = 0
     if opt.resume or opt.transfer:  # Load previously saved model
         if opt.transfer and not opt.resume:  # Transfer learning
 #            nf = int(model.module_defs[model.yolo_layers[0] - 1]['filters'])  # yolo layer size (i.e. 255)
@@ -126,7 +126,7 @@ def train(
 
 
 #    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[round(opt.epochs * x) for x in (0.8, 0.9)], gamma=0.1)
-    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min',verbose=True)
+    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min',verbose=True,min_lr=1e-7)
     scheduler.last_epoch = start_epoch - 1
 
 
@@ -170,21 +170,17 @@ def train(
             mixed_precision = False
 
     # Start training
-#    model.hyp = hyp  # attach hyperparameters to model
-    # model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device)  # attach class weights
     model_info(model, report='summary')  # 'full' or 'summary'
     nb = len(dataloader)
     maps = np.zeros(nc)  # mAP per class
     results = (0, 0, 0, 0, 0)  # P, R, mAP, F1, test_loss
-#    n_burnin = min(round(nb / 5 + 1), 1000)  # burn-in batches
     n_burnin=-1
     t, t0 = time.time(), time.time()
     with open(log_path, 'a') as logfile:
         logfile.write("nb epochs : %i\n"%epochs)
         
-        #Freezing layer
 
-
+    model.depth_pred.init_weights()
     for epoch in range(start_epoch, epochs):
         loss_scheduler=[]
         model.train()
@@ -194,6 +190,7 @@ def train(
             if type(model) is nn.parallel.DistributedDataParallel:
                 model.module.depth_pred.train()
                 model.module.featurePooling.train()
+                
             else:
                 model.depth_pred.train()
                 model.featurePooling.train()
@@ -332,24 +329,24 @@ def train(
 #        torch.cuda.synchronize()
 
         # Calculate mAP (always test final epoch, skip first 5 if opt.nosave)
-        if (not (opt.notest or (opt.nosave and epoch < 10)) and epoch%1==0) or (epoch == epochs - 1):
+        if (not (opt.notest or (opt.nosave and epoch < 10)) and epoch%10==0) or (epoch == epochs - 1):
             with open(log_path, 'a') as logfile:
                 logfile.write("testing \n")
             with torch.no_grad():
                 
                 if type(model) is nn.parallel.DistributedDataParallel:
                 
-                    results, maps = test.test(cfg, data_cfg, batch_size=3, img_size=opt.img_size,
+                    results, maps = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
-                    results_training, _ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=3, img_size=opt.img_size,
+                    results_training, _ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
                 else:
-                    results, maps = test.test(cfg, data_cfg, batch_size=1, img_size=opt.img_size,
+                    results, maps = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
-                    results_training, _ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=1, img_size=opt.img_size,
+                    results_training, _ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
             # Write epoch results
@@ -360,8 +357,8 @@ def train(
                 file.write('%g/%g' % (epoch, epochs - 1) + '%11.3g' * 4 % (results_training[-1], results[-1],mloss[-1].item(),results[2])+'\n')  #training_abs,test_abs,loss,mAP
 
             # Update best map
-            fitness = results[-1]
-            if fitness < best_fitness:
+            fitness = results[2]
+            if fitness > best_fitness and fitness!=0:
                 print("best error replaced by %f"%fitness)
                 best_fitness = fitness
 
@@ -429,20 +426,20 @@ def print_mutation(hyp, results):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--run_id', default=str(time.time()).split(".")[0], help='number of epochs')
+    parser.add_argument('--run_id', default='', help='number of epochs')
     parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=64,
+    parser.add_argument('--batch-size', type=int, default=1,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
-    parser.add_argument('--img-size', type=int, default=608, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--depth_aug', default=False, help='resume training flag')
-    parser.add_argument('--transfer', default=True, help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=28, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--transfer', default=False, help='transfer learning flag')
+    parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')

@@ -214,20 +214,51 @@ class Depth_Layer(nn.Module):
     def __init__(self,nc,num_bin):
         super(Depth_Layer, self).__init__()
         self.nc=nc
+        num_channel=1024
         self.num_bin=num_bin
         self.module_list=self.init_mod()
+#        self.dep = nn.Sequential(
+        self.conv1=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn1=nn.BatchNorm2d(num_channel)
+        self.relu=nn.ReLU(inplace=True)
+        self.conv2=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn2=nn.BatchNorm2d(num_channel)
+
+        self.conv3=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn3=nn.BatchNorm2d(num_channel)
+        self.conv4=nn.Conv2d(num_channel, 2*self.nc*self.num_bin, kernel_size=1,
+                  stride=1, padding=0, bias=True)
+        self.sig=nn.Sigmoid()
 #        self.linear1=nn.Linear(in_features=2048, out_features=1024, bias=True)
-        self.linear2=nn.Linear(in_features=2048, out_features=2*self.nc*self.num_bin, bias=True)
-        self.avgpool=nn.AdaptiveMaxPool2d((4,4))
+#        self.linear2=nn.Linear(in_features=2048, out_features=2*self.nc*self.num_bin, bias=True)
+#        self.conv=nn.Conv2d(2048,2*self.nc*self.num_bin, kernel_size=(1, 1), stride=(1, 1), bias=True)
+#        self.avgpool=nn.AdaptiveMaxPool2d((4,4))
 
     def forward(self,x):
-        x=self.module_list(x)
-        x=self.avgpool(x).view(-1,2048)
-#        x=self.linear1(x)
-        x=self.linear2(x).view(-1,self.nc,self.num_bin,2)
+
+
+        x=self.conv1(x)
+        x=self.bn1(x)
+        x=self.relu(x)
+        x=self.conv2(x)
+        x=self.bn2(x)
+        x=self.conv3(x)
+        if x.shape[0]>1:
+            x=self.bn3(x)
+        x=self.conv4(x)
+#        x=self.sig(x)
+        x=x.view(-1,self.nc,self.num_bin,2)
         
-        if not self.training:
-            x[:,:,:,1]=torch.sigmoid(x[:,:,:,1])
+#        x=self.module_list(x)
+#        x=self.avgpool(x).view(-1,2048)
+#        x=self.linear1(x)
+#        x=self.conv(x).view(-1,self.nc,self.num_bin,2)
+
+#        if not self.training:
+#            x[:,:,:,1]=torch.sigmoid(x[:,:,:,1])
         return x
         
     def init_mod(self):
@@ -236,6 +267,35 @@ class Depth_Layer(nn.Module):
         modules=nn.Sequential(Bottleneck(1024,512,stride=2,downsample=downsample(1024,2048)),
                 Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1))
         return modules
+    
+    def init_weights(self):
+        '''
+        Initial modules weights and biases
+        '''
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight.data,
+                                        nonlinearity='relu')
+                if m.bias is not None:
+                    m.bias.data.zero_()
+    
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+    
+            if isinstance(m, nn.BatchNorm2d):
+                m.weight.data.uniform_()
+                if m.bias is not None:
+                    m.bias.data.zero_()
+    
+            if isinstance(m, nn.LSTM):
+                for param in m.parameters():
+                    if len(param.shape) >= 2:
+                        nn.init.orthogonal_(param.data)
+                    else:
+                        nn.init.normal_(param.data)
 
 class EmptyLayer(nn.Module):
     """Placeholder for 'route' and 'shortcut' layers"""
@@ -338,7 +398,8 @@ class Darknet(nn.Module):
         self.center_prediction=center_pred(self.nc)
         self.transfer=transfer
         self.hyp=hyp
-        self._init_weights()
+        
+
 
     def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0,testing=False):
 

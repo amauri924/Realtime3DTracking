@@ -14,9 +14,9 @@ def test(
         weights=None,
         batch_size=16,
         img_size=416,
-        iou_thres=0.5,
-        conf_thres=0.1,
-        nms_thres=0.5,
+        iou_thres=0.6,
+        conf_thres=0.001,
+        nms_thres=0.6,
         save_json=False,
         model=None
 ):
@@ -230,6 +230,8 @@ def test(
     else:
         center_abs_err=0
         depth_abs_err=0
+        mean_real_depth_abs_err=0
+        loss_dconf=0
     for i, c in enumerate(ap_class):
         maps[c] = ap[i]
     return (mp, mr, map, mf1, loss / len(dataloader), center_abs_err,loss_dconf,depth_abs_err,mean_real_depth_abs_err), maps
@@ -240,10 +242,10 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=12, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best_1.8.pt', help='path to weights file')
-    parser.add_argument('--iou-thres', type=float, default=0.5, help='iou threshold required to qualify as detected')
-    parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
-    parser.add_argument('--nms-thres', type=float, default=0.5, help='iou threshold for non-maximum suppression')
+    parser.add_argument('--weights', type=str, default='weights/best_1.11.pt', help='path to weights file')
+    parser.add_argument('--iou-thres', type=float, default=0.6, help='iou threshold required to qualify as detected')
+    parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
+    parser.add_argument('--nms-thres', type=float, default=0.6, help='iou threshold for non-maximum suppression')
     parser.add_argument('--save-json', default=False, help='save a cocoapi-compatible JSON results file')
     parser.add_argument('--img-size', type=int, default=608, help='inference size (pixels)')
     opt = parser.parse_args()

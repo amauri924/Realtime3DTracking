@@ -69,7 +69,7 @@ def detection(
 #            plot_images(imgs=imgs, targets=targets, paths=paths, fname='test_batch0.jpg')
 
         # Run model
-        output, center_pred_list, depth_pred_list = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres)  # inference and training outputs
+        output, center_pred_list, depth_pred_list = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True)  # inference and training outputs
 
         
 
@@ -99,7 +99,7 @@ def detection(
                 depth_bin_idx=torch.max(depth_pred[i,int(pcls),:,1],0)[1]
                 pdepth=depth_pred[i,int(pcls),depth_bin_idx,0]*200+depth_bin[depth_bin_idx]
                 # Add bbox to the image
-                label = '%s %.2f Distance:%.2f' % (classes[int(pcls)], pcls_conf,pdepth)
+                label = '%s %.2f' % (classes[int(pcls)],pdepth)
                 plot_one_box(pbox, im0, label=label, color=colors[int(pcls)])
             cv2.imwrite(save_path, im0)
                 
@@ -109,10 +109,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best_1.8.pt', help='path to weights file')
+    parser.add_argument('--weights', type=str, default='/home/antoine/Realtime3DTracking/weights/train.5bin/best_16.41.pt', help='path to weights file')
     parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
-    parser.add_argument('--nms-thres', type=float, default=0.3, help='iou threshold for non-maximum suppression')
-    parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
+    parser.add_argument('--nms-thres', type=float, default=0.6, help='iou threshold for non-maximum suppression')
+    parser.add_argument('--img-size', type=int, default=800, help='inference size (pixels)')
     opt = parser.parse_args()
     print(opt)
 

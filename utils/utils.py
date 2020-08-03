@@ -340,9 +340,9 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True
     
     for i,d_bin in enumerate(depth_bin):
         target_depth[:,i]=gt_depth[:,0]-d_bin
-    tconf_depth=torch.zeros_like(target_depth)
-    tconf_depth[range(len(target_depth)),torch.min(abs(target_depth),1)[1]]=1.0
-#    tconf_depth=(abs(target_depth)<24).type(torch.float)
+#    tconf_depth=torch.zeros_like(target_depth)
+#    tconf_depth[range(len(target_depth)),torch.min(abs(target_depth),1)[1]]=1.0
+    tconf_depth=(abs(target_depth)<24).type(torch.float)
     bin_in_range=abs(target_depth)<24 #Select the bins which are in range of the target. Bins width = 48
     target_depth/=200
     pconf_depth=torch.cat([pred_depth[idx,int(index),:,1] for idx,index in enumerate(targets[:,1])]).view(-1,len(depth_bin)) 
@@ -373,9 +373,9 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True
     lobj *= (k * h['obj']) / ng
     lcent += ((bs))*10*L1loss(pcent,target_cent)
     lconf_depth+= BCEdepth(pconf_depth, tconf_depth)
-    ldepth += 100*bs*L1loss(p_depth,target_depth)
+    ldepth += bs*L1loss(p_depth,target_depth)
 #    loss = lxy + lwh + lobj + lcls + lcent + ldepth
-    loss=lconf_depth+ldepth
+    loss=lconf_depth+ldepth+lcent+lobj+lcls+lwh+lxy
 
     return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,lconf_depth,ldepth, loss)).detach()
 
