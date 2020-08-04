@@ -375,7 +375,7 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True
     lconf_depth+= BCEdepth(pconf_depth, tconf_depth)
     ldepth += bs*L1loss(p_depth,target_depth)
 #    loss = lxy + lwh + lobj + lcls + lcent + ldepth
-    loss=lconf_depth+ldepth+lcent+lobj+lcls+lwh+lxy
+    loss=lconf_depth+ldepth
 
     return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,lconf_depth,ldepth, loss)).detach()
 

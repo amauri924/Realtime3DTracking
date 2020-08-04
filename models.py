@@ -408,6 +408,7 @@ class Darknet(nn.Module):
         else:
             self.transfer=True
         if not self.training and not self.transfer:
+<<<<<<< Updated upstream
             _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
             io=[]
             for line in io_orig:
@@ -434,6 +435,27 @@ class Darknet(nn.Module):
                 del pooled_features
             del features
             return rois,center_pred_list,depth_pred_list
+=======
+            _ ,features,_=  self.Yolov3(x) # inference output, training output
+            device_id=int(str(x.device)[-1])
+            targets=torch.from_numpy(targets)
+            targets=targets.to(features.device)
+            new_idxs=targets[:,0]-device_id*x.shape[0]
+            mask_1=new_idxs<x.shape[0]
+            mask_2=new_idxs>-1
+            mask_3=mask_1&mask_2
+            targets=targets[mask_3]
+            rois=targets[:,2:6]
+            
+
+            b=new_idxs[mask_3]
+            pooled_features=self.featurePooling(features, rois,b)
+            depth_pred=self.depth_pred(pooled_features)
+            del b,rois
+            top_layer=self.top_layer(pooled_features) # Run the final layers 
+            center_pred=self.center_prediction(top_layer)/100 # Run the 3D prediction
+            return center_pred,depth_pred
+>>>>>>> Stashed changes
         else:
             p ,features,_=  self.Yolov3(x) # inference output, training output
             targets=torch.from_numpy(targets)

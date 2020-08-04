@@ -85,7 +85,7 @@ def train(
 
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
-    best_fitness = 0
+    best_fitness = 1e6
     if opt.resume or opt.transfer:  # Load previously saved model
         if opt.transfer and not opt.resume:  # Transfer learning
 #            nf = int(model.module_defs[model.yolo_layers[0] - 1]['filters'])  # yolo layer size (i.e. 255)
@@ -336,29 +336,29 @@ def train(
                 
                 if type(model) is nn.parallel.DistributedDataParallel:
                 
-                    results, maps = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
+                    results = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
-                    results_training, _ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
+                    results_training = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
                 else:
-                    results, maps = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
+                    results = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
-                    results_training, _ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
+                    results_training = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
             # Write epoch results
             with open(result_path, 'a') as file:
-                file.write(s + '%11.3g' * 9 % results + '\n')  # P, R, mAP, F1, test_loss, center_abs_err, dconf_loss, depth_abs_err, "real" depth_abs_err
+                file.write(s + '%11.3g' * 4 % results + '\n')  # P, R, mAP, F1, test_loss, center_abs_err, dconf_loss, depth_abs_err, "real" depth_abs_err
 
             with open("result_training"+str(opt.run_id)+".txt", 'a') as file:
                 file.write('%g/%g' % (epoch, epochs - 1) + '%11.3g' * 4 % (results_training[-1], results[-1],mloss[-1].item(),results[2])+'\n')  #training_abs,test_abs,loss,mAP
 
             # Update best map
-            fitness = results[2]
-            if fitness > best_fitness and fitness!=0:
+            fitness = results[-1]
+            if fitness < best_fitness and fitness!=0:
                 print("best error replaced by %f"%fitness)
                 best_fitness = fitness
 
