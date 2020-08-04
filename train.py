@@ -329,7 +329,7 @@ def train(
 #        torch.cuda.synchronize()
 
         # Calculate mAP (always test final epoch, skip first 5 if opt.nosave)
-        if (not (opt.notest or (opt.nosave and epoch < 10)) and epoch%10==0) or (epoch == epochs - 1):
+        if (not (opt.notest or (opt.nosave and epoch < 10)) and epoch%1==0) or (epoch == epochs - 1):
             with open(log_path, 'a') as logfile:
                 logfile.write("testing \n")
             with torch.no_grad():
@@ -370,7 +370,7 @@ def train(
 
 
         # Save training results
-        save = ((not opt.nosave) and (epoch%10==0)) or ((not opt.evolve) and (epoch == epochs - 1))
+        save = ((not opt.nosave) and (epoch%1==0)) or ((not opt.evolve) and (epoch == epochs - 1))
         if save:
             with open(log_path, 'a') as logfile:
                 logfile.write("saving...\n")
@@ -436,7 +436,7 @@ if __name__ == '__main__':
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
-    parser.add_argument('--resume', default=False, help='resume training flag')
+    parser.add_argument('--resume', default=True, help='resume training flag')
     parser.add_argument('--depth_aug', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=False, help='transfer learning flag')
     parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
