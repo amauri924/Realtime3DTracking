@@ -408,34 +408,6 @@ class Darknet(nn.Module):
         else:
             self.transfer=True
         if not self.training and not self.transfer:
-<<<<<<< Updated upstream
-            _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
-            io=[]
-            for line in io_orig:
-                line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
-                io.append(line)
-            rois=torch.cat(io,1)
-            time_NMS=time.time()
-            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
-            time_NMS=time.time()-time_NMS
-            center_pred_list=[]
-            depth_pred_list=[]
-            for i,roi in enumerate(rois):
-                if roi is None:
-                    center_pred_list.append(torch.tensor([]).to(x.device).view(0,2*self.nc))
-                    depth_pred_list.append(torch.tensor([]).to(x.device).view(0,self.nc,self.num_bin,2))
-                    rois[i]=torch.tensor([]).to(x.device).view(0,7)
-                    continue
-                pooled_features=self.featurePooling(features, roi)
-                depth_pred=self.depth_pred(pooled_features)
-                pooled_features=self.top_layer(pooled_features) # Run the final layers 
-                center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
-                center_pred_list.append(center_pred)
-                depth_pred_list.append(depth_pred)
-                del pooled_features
-            del features
-            return rois,center_pred_list,depth_pred_list
-=======
             _ ,features,_=  self.Yolov3(x) # inference output, training output
             device_id=int(str(x.device)[-1])
             targets=torch.from_numpy(targets)
@@ -445,17 +417,15 @@ class Darknet(nn.Module):
             mask_2=new_idxs>-1
             mask_3=mask_1&mask_2
             targets=targets[mask_3]
-            rois=targets[:,2:6]
-            
-
-            b=new_idxs[mask_3]
-            pooled_features=self.featurePooling(features, rois,b)
+            roi=targets[:,2:6]
+            pooled_features=self.featurePooling(features, roi)
             depth_pred=self.depth_pred(pooled_features)
-            del b,rois
-            top_layer=self.top_layer(pooled_features) # Run the final layers 
-            center_pred=self.center_prediction(top_layer)/100 # Run the 3D prediction
+            pooled_features=self.top_layer(pooled_features) # Run the final layers 
+            center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
+            del pooled_features
+            del features
             return center_pred,depth_pred
->>>>>>> Stashed changes
+        
         else:
             p ,features,_=  self.Yolov3(x) # inference output, training output
             targets=torch.from_numpy(targets)
