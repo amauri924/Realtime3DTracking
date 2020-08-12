@@ -23,7 +23,7 @@ hyp = {'giou': 1.666,  # giou loss gain
        'obj_pw': 8.338,  # obj BCELoss positive_weight
        'iou_t': 0.2705,  # iou target-anchor training threshold
 #       'lr0': 0.001,  # initial learning rate
-       'lr0': 0.001,  # initial learning rate
+       'lr0': 1e-3,  # initial learning rate
        'lrf': -4.,  # final learning rate = lr0 * (10 ** lrf)
        'momentum': 0.90,  # SGD momentum
        'weight_decay': 0.0005}  # optimizer weight decay
@@ -80,8 +80,8 @@ def train(
                 else:
                     print(name)
     # Optimizer
-    optimizer = optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
-#    optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'],  weight_decay=hyp['weight_decay'])
+#    optimizer = optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()), lr=hyp['lr0'],  weight_decay=hyp['weight_decay'])
 
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
@@ -124,9 +124,9 @@ def train(
         for f in glob.glob('*_batch*.jpg') + glob.glob('results.txt'):
             os.remove(f)
 
-
+    min_lr=1e-10*hyp['lr0']
 #    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[round(opt.epochs * x) for x in (0.8, 0.9)], gamma=0.1)
-    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min',verbose=True,min_lr=1e-7)
+    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min',verbose=True,min_lr=min_lr)
     scheduler.last_epoch = start_epoch - 1
 
 
@@ -135,7 +135,7 @@ def train(
     dataset = LoadImagesAndLabels(train_path,
                                   img_size,
                                   batch_size,
-                                  augment=True,
+                                  augment=False,
                                   rect=opt.rect)  # rectangular training
 
     # Initialize distributed training
@@ -213,8 +213,9 @@ def train(
         
         
         
-        for i, (imgs, targets, paths, _) in enumerate(dataloader):
+        for i, (imgs, targets, paths, _,calib) in enumerate(dataloader):
             imgs = imgs.to(device)
+            
             
             if opt.depth_aug:
                 targets=rois_augmentation_for_depth(targets,0.2,0.02)
@@ -274,7 +275,7 @@ def train(
 
             # Compute loss
             try:
-                loss, loss_items = compute_loss(pred,pred_center,depth_pred, targets, model,imgs.shape[2:], giou_loss=not opt.xywh)
+                loss, loss_items = compute_loss(pred,pred_center,depth_pred, targets, model,imgs.shape[2:],calib, giou_loss=not opt.xywh)
             except:
                 with open("debug_"+str(opt.run_id)+".txt",'a') as f:
                     f.write("error in loss\n")
@@ -327,7 +328,7 @@ def train(
         with open(log_path, 'a') as logfile:
             logfile.write('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, dt))
 #        torch.cuda.synchronize()
-        if hyp['lr0']==1.0000e-07:
+        if hyp['lr0']<min_lr*10:
             save_freq=1
         else:
             save_freq=10
@@ -357,7 +358,7 @@ def train(
                 file.write(s + '%11.3g' * 4 % results + '\n')  # P, R, mAP, F1, test_loss, center_abs_err, dconf_loss, depth_abs_err, "real" depth_abs_err
 
             with open("result_training"+str(opt.run_id)+".txt", 'a') as file:
-                file.write('%g/%g' % (epoch, epochs - 1) + '%11.3g' * 4 % (results_training[-1], results[-1],mloss[-1].item(),results[2])+'\n')  #training_abs,test_abs,loss,mAP
+                file.write('%g/%g' % (epoch, epochs - 1) + '%11.3g' * 3 % (results_training[-1], results[-1],mloss[-1].item())+'\n')  #training_abs,test_abs,loss,mAP
 
             # Update best map
             fitness = results[-1]
@@ -432,7 +433,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
     parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=1,
+    parser.add_argument('--batch-size', type=int, default=3,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
@@ -443,7 +444,7 @@ if __name__ == '__main__':
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--depth_aug', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=False, help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=0, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')

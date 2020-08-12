@@ -229,7 +229,7 @@ class Depth_Layer(nn.Module):
         self.conv3=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, 2*self.nc*self.num_bin, kernel_size=1,
+        self.conv4=nn.Conv2d(num_channel, 1, kernel_size=1,
                   stride=1, padding=0, bias=True)
         self.sig=nn.Sigmoid()
 #        self.linear1=nn.Linear(in_features=2048, out_features=1024, bias=True)
@@ -249,8 +249,8 @@ class Depth_Layer(nn.Module):
         if x.shape[0]>1:
             x=self.bn3(x)
         x=self.conv4(x)
-#        x=self.sig(x)
-        x=x.view(-1,self.nc,self.num_bin,2)
+        x=self.sig(x).view(-1,1)
+#        x=x.view(-1,self.nc,self.num_bin,2)
         
 #        x=self.module_list(x)
 #        x=self.avgpool(x).view(-1,2048)
@@ -388,7 +388,7 @@ class Darknet(nn.Module):
 
     def __init__(self, cfg,hyp,transfer=False, img_size=(416, 416)):
         super(Darknet, self).__init__()
-        self.num_bin=5
+        self.num_bin=1
         self.Yolov3=Yolov3(cfg,img_size)
         self.nc=int(self.Yolov3.module_defs[-1]['classes']) #Get num classes
         self.featurePooling=RoiAlign()

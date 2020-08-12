@@ -267,6 +267,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
         img_path = self.img_files[index]
         label_path = self.label_files[index]
+        calib_path=self.img_files[index].split('.')[0]+'.npy'
+        calib=np.load(calib_path)
 
         # Load image
         img = self.imgs[index]
@@ -372,14 +374,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img = np.ascontiguousarray(img, dtype=np.float32)  # uint8 to float32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
 
-        return torch.from_numpy(img), labels_out, img_path, (h, w)
+        return torch.from_numpy(img), labels_out, img_path, (h, w),torch.tensor(calib)
 
     @staticmethod
     def collate_fn(batch):
-        img, label, path, hw = list(zip(*batch))  # transposed
+        img, label, path, hw,calib = list(zip(*batch))  # transposed
         for i, l in enumerate(label):
             l[:, 0] = i  # add target image index for build_targets()
-        return torch.stack(img, 0), torch.cat(label, 0), path, hw
+        return torch.stack(img, 0), torch.cat(label, 0), path, hw, torch.stack(calib,0)
 
 
 def letterbox(img, new_shape=416, color=(127.5, 127.5, 127.5), mode='auto'):

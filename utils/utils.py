@@ -270,8 +270,12 @@ def wh_iou(box1, box2):
 
     return inter_area / union_area  # iou
 
+def get_depth(pred):
+    depth=1/pred -1
+    return depth
 
-def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib, giou_loss=True):  # predictions, targets, model
+    calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
     lxy, lwh, lcls, lobj, lcent, ldepth,lconf_depth = ft([0]), ft([0]), ft([0]), ft([0]), ft([0]), ft([0]),ft([0])
     txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
@@ -289,11 +293,7 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True
     L1loss=torch.nn.L1Loss()
     # CE = nn.CrossEntropyLoss()  # (weight=model.class_weights)
     
-    depth_bin=[1.662120213105634647e+01,
-               3.226488398501740562e+01,
-               5.094282679935143676e+01,
-               7.380026966365950614e+01,
-               1.111202708277208160e+02
+    depth_bin=[100
                ]
     
     # Compute losses
@@ -334,22 +334,12 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True
         lobj += BCEobj(pi0[..., 4], tobj)  # obj loss
     pcent= p_center #Associated 3D centers
     pcent=torch.cat([pcent.view(pcent.shape[0],-1,2)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,2) #Select center prediction corresponding to the target class
-    gt_depth=targets[:,8].clone().view(-1,1)*200
-    target_depth=torch.zeros(gt_depth.shape[0],len(depth_bin)).to(gt_depth.device)
+    gt_depth=targets[:,8].clone().view(-1,1)
 
-    
-    for i,d_bin in enumerate(depth_bin):
-        target_depth[:,i]=gt_depth[:,0]-d_bin
-#    tconf_depth=torch.zeros_like(target_depth)
-#    tconf_depth[range(len(target_depth)),torch.min(abs(target_depth),1)[1]]=1.0
-    tconf_depth=(abs(target_depth)<24).type(torch.float)
-    bin_in_range=abs(target_depth)<24 #Select the bins which are in range of the target. Bins width = 48
-    target_depth/=200
-    pconf_depth=torch.cat([pred_depth[idx,int(index),:,1] for idx,index in enumerate(targets[:,1])]).view(-1,len(depth_bin)) 
-    p_depth=torch.cat([pred_depth[idx,int(index),:,0] for idx,index in enumerate(targets[:,1])]).view(-1,len(depth_bin))#Select center prediction corresponding to the target class
-    target_depth=target_depth[bin_in_range] #Risk of mem leak
-    p_depth=p_depth[bin_in_range]
-    abs_rel_err_depth=torch.mean(abs(p_depth-target_depth)/abs(p_depth)).detach().cpu().item()
+
+    p_depth=pred_depth
+
+
 #    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
     rois=targets[:,2:6].clone() # Rois closest to anchors 
     rois[:,0]*=img_shape[0]
@@ -362,22 +352,46 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape, giou_loss=True
     target_cent=targets[:,6:8].clone()
     target_cent[:,0]*=img_shape[0]
     target_cent[:,1]*=img_shape[1]
+    target_sensor_coord=target_cent.clone()
     target_cent=target_cent-rois[:,:2]
     
     target_cent[:,0]/=rois[:,2]
     target_cent[:,1]/=rois[:,3]
     
+    target_sensor_coord=torch.cat((torch.transpose(target_sensor_coord,0,1),torch.transpose(gt_depth.clone()*200, 0, 1)),dim=0)
+    target_sensor_coord=torch.cat((target_sensor_coord,torch.zeros((1,target_sensor_coord.shape[1])).to(target_sensor_coord.device)+1))
+    
+    pred_sensor_coord=pcent.clone()
+    pred_sensor_coord[:,0]*=rois[:,2]
+    pred_sensor_coord[:,1]*=rois[:,3]
+    
+    pred_sensor_coord+=rois[:,:2]
+    pred_sensor_coord=torch.cat((torch.transpose(pred_sensor_coord,0,1),torch.transpose(p_depth.clone()*200, 0, 1)),dim=0)
+    pred_sensor_coord=torch.cat((pred_sensor_coord,torch.zeros((1,pred_sensor_coord.shape[1])).to(pred_sensor_coord.device)+1))
+    
+    batch_num=targets[:,0].cpu().numpy()
+    target_loc=ft([])
+    pred_loc=ft([])
+    for j in range(target_sensor_coord.shape[1]):
+        target_loc=torch.cat((target_loc,torch.matmul(calib[int(batch_num[j])],target_sensor_coord[:,j]).view(4,1)),dim=1)
+        pred_loc=torch.cat((pred_loc,torch.matmul(calib[int(batch_num[j])],pred_sensor_coord[:,j]).view(4,1)),dim=1)
+    target_loc=target_loc[:-1,:]
+    pred_loc=pred_loc[:-1,:]
     lxy *= (k * h['giou']) / nt
     lwh *= (k * h['wh']) / nt
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
     lcent += ((bs))*10*L1loss(pcent,target_cent)
-    lconf_depth+= BCEdepth(pconf_depth, tconf_depth)
-    ldepth += bs*L1loss(p_depth,target_depth)
-#    loss = lxy + lwh + lobj + lcls + lcent + ldepth
-    loss=lconf_depth+ldepth
 
-    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,lconf_depth,ldepth, loss)).detach()
+    ldepth += L1loss(p_depth,gt_depth)
+    ldepth += L1loss(pred_loc,target_loc)
+    ldepth/=10
+    if not torch.isfinite(ldepth):
+        print("err")
+    loss = lxy + lwh + lobj + lcls + lcent + ldepth 
+#    loss=lconf_depth+ldepth
+
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldepth, loss)).detach()
 
 
 

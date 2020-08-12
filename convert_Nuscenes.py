@@ -156,8 +156,15 @@ for scene in scenes:
         sensor = 'CAM_FRONT'
         cam_front_data = nusc.get('sample_data', sample['data'][sensor])
         
-#        sample_data=nusc.get('sample_annotation', sample['anns'][0])
+        ego_pose = nusc.get('ego_pose', cam_front_data['ego_pose_token'])
+        cal_sensor = nusc.get('calibrated_sensor', cam_front_data['calibrated_sensor_token'])
         
+        car_from_senor = transform_matrix(cal_sensor['translation'], Quaternion(cal_sensor['rotation']), inverse=False)
+        
+        global_from_car = transform_matrix(ego_pose['translation'], Quaternion(ego_pose['rotation']), inverse=False)
+        
+        global_from_sensor=global_from_car @ car_from_senor
+        np.save("/home/antoine/test_img_NS/scene%i_sample%i.npy"%(scene_id,sample_id),global_from_sensor)
         
         data_path, boxes, camera_intrinsic = get_sample_data(nusc,cam_front_data['token'],
                                                                                    box_vis_level=BoxVisibility.ANY)
@@ -171,7 +178,7 @@ for scene in scenes:
                 corners=transform_3d_to_2d(corners,camera_intrinsic)
                 if len(nusc.get('sample_annotation',box.token)['category_name'].split('.'))>1:
                     center=get_3d_center(box.center,camera_intrinsic)
-                    dist=np.sqrt(box.center[0]**2+box.center[1]**2+box.center[2]**2)
+                    dist=box.center[2]
                     labels.append((nusc.get('sample_annotation',box.token)['category_name'].split('.')[1],[(min(corners[0,:]),min(corners[1,:])),(max(corners[0,:]),max(corners[1,:]))],center,dist))
                 
         
