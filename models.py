@@ -408,7 +408,19 @@ class Darknet(nn.Module):
         else:
             self.transfer=True
         if not self.training and not self.transfer:
-            _ ,features,_=  self.Yolov3(x) # inference output, training output
+            _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
+            io=[]
+            for line in io_orig:
+                line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
+                io.append(line)
+            rois=torch.cat(io,1)
+            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+            
+            for i,roi in enumerate(rois):
+                if roi is None:
+                    rois[i]=torch.tensor([]).to(x.device).view(0,7)
+                    continue
+            
             device_id=int(str(x.device)[-1])
             targets=torch.from_numpy(targets)
             targets=targets.to(features.device)
@@ -424,7 +436,7 @@ class Darknet(nn.Module):
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             del pooled_features
             del features
-            return center_pred,depth_pred
+            return rois,center_pred,depth_pred
         
         else:
             p ,features,_=  self.Yolov3(x) # inference output, training output

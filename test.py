@@ -7,6 +7,150 @@ from models import *
 from utils.datasets import *
 from utils.utils import *
 
+def prepare_data_for_foward_pass(targets,device,imgs):
+    input_targets=targets.numpy()
+
+    
+    targets = targets.to(device)
+    imgs = imgs.to(device)
+    _, _, height, width = imgs.shape  # batch size, channels, height, width
+    
+    #xywh€[0,1] to xyxy in pixels
+    input_targets[:, [2+1, 4+1]] *= imgs.shape[2]
+    input_targets[:, [1+1, 3+1]] *= imgs.shape[3]
+    x_centers=input_targets[:,2].copy()
+    y_centers=input_targets[:,3].copy()
+    w=input_targets[:,4].copy()
+    h=input_targets[:,5].copy()
+    input_targets[:,2]=x_centers-w/2
+    input_targets[:,4]=x_centers+w/2
+    input_targets[:,3]=y_centers-h/2
+    input_targets[:,5]=y_centers+h/2
+    
+    return input_targets,width,height,imgs,targets
+
+def compute_center_and_depth_errors(center_pred,depth_pred,center_abs_err,depth_abs_err,targets,img_shape):
+        # Statistics per image
+        labels=targets[:,1:]
+        tcls=labels[:,0]
+        width,height=img_shape
+        tbox = xywh2xyxy(labels[:, 1:5])
+        tbox[:, [0, 2]] *= width
+        tbox[:, [1, 3]] *= height
+        
+        tcent=labels[:, 5:7]
+        tdepth=labels[:,7]
+
+        tcent[:, 0] *= width
+        tcent[:, 1] *= height
+
+        for idx_pred in range(len(center_pred)):
+            target_center=tcent[idx_pred]
+            predicted_center=center_pred[idx_pred]
+            
+            gt_depth=tdepth[idx_pred]
+            predicted_depth=depth_pred[idx_pred]
+            
+            
+            obj_cls=int(tcls[idx_pred])
+            predicted_center=predicted_center[obj_cls:obj_cls+2]
+            
+
+            
+            w_bbox=tbox[idx_pred][2].cpu().item()-tbox[idx_pred][0].cpu().item()
+            h_bbox=tbox[idx_pred][3].cpu().item()-tbox[idx_pred][1].cpu().item()
+            centerbbox_x=tbox[idx_pred][0].cpu().item()+w_bbox/2
+            centerbbox_y=tbox[idx_pred][1].cpu().item()+h_bbox/2
+            
+            predicted_center[0]=predicted_center[0]*w_bbox+centerbbox_x
+            predicted_center[1]=predicted_center[1]*h_bbox+centerbbox_y
+            
+
+            center_abs_err.append(torch.mean(torch.tensor([abs(abs(predicted_center[0]-target_center[0])/target_center[0]),abs(abs(predicted_center[1]-target_center[1])/target_center[1])])))
+            depth_abs_err.append(abs(abs(predicted_depth-gt_depth)/(gt_depth+0.00001)))
+        return center_abs_err,depth_abs_err
+
+def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,nc,names,seen):
+    # Compute statistics
+    stats = [np.concatenate(x, 0) for x in list(zip(*stats))]  # to numpy
+    nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
+    if len(stats):
+        p, r, ap, f1, ap_class = ap_per_class(*stats)
+        mp, mr, map, mf1 = p.mean(), r.mean(), ap.mean(), f1.mean()
+
+    # Print results
+    pf = '%30s' + '%10.3g' * 6  # print format
+    print(pf % ('all', seen, nt.sum(), mp, mr, map, mf1))
+
+    # Print results per class
+    if nc > 1 and len(stats):
+        for i, c in enumerate(ap_class):
+            print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i]))
+
+    # Return results
+    maps = np.zeros(nc) + map
+    for i, c in enumerate(ap_class):
+        maps[c] = ap[i]
+    
+    
+    # Return results
+    if len(center_abs_err)>0:
+        center_abs_err=torch.mean(torch.tensor(center_abs_err)[torch.isfinite(torch.tensor(center_abs_err))]).cpu().item()
+        depth_abs_err=torch.mean(torch.tensor(depth_abs_err)[torch.isfinite(torch.tensor(depth_abs_err))]).cpu().item()
+        if math.isnan(depth_abs_err):
+            print("nan")
+
+    else:
+        center_abs_err=0
+        depth_abs_err=0
+    
+    return (mp, mr, map, mf1, center_abs_err,depth_abs_err), maps
+
+def compute_bbox_error(output,targets,stats,width,height,iou_thres,seen):
+    for si, pred in enumerate(output):
+            labels = targets[targets[:, 0] == si, 1:]
+            nl = len(labels)
+            tcls = labels[:, 0].tolist() if nl else []  # target class
+            seen += 1
+
+            if len(pred)==0:
+                if nl:
+                    stats.append(([], torch.Tensor(), torch.Tensor(), tcls))
+                continue
+
+
+            # Assign all predictions as incorrect
+            correct = [0] * len(pred)
+            if nl:
+                detected = []
+                tcls_tensor = labels[:, 0]
+
+                # target boxes
+                tbox = xywh2xyxy(labels[:, 1:5])
+                tbox[:, [0, 2]] *= width
+                tbox[:, [1, 3]] *= height
+                # Search for correct predictions
+                for i, (*pbox, pconf, pcls_conf, pcls) in enumerate(pred):
+
+                    # Break if all targets already located in image
+                    if len(detected) == nl:
+                        break
+
+                    # Continue if predicted class not among image classes
+                    if pcls.item() not in tcls:
+                        continue
+
+                    # Best iou, index between pred and targets
+                    m = (pcls == tcls_tensor).nonzero().view(-1)
+                    iou, bi = bbox_iou(pbox, tbox[m]).max(0)
+                    # If iou > threshold and class is correct mark as correct
+                    if iou > iou_thres and m[bi] not in [ind[1] for ind in detected]:  # and pcls == tcls[bi]:
+                        correct[i] = 1
+                        detected.append((i,m[bi].cpu().item()))
+                
+            # Append statistics (correct, conf, pcls, tcls)
+            stats.append((correct, pred[:, 4].cpu(), pred[:, 6].cpu(), tcls))
+    return stats,seen
 
 def test(
         cfg,
@@ -64,100 +208,21 @@ def test(
     jdict, stats, ap, ap_class = [], [], [], []
     center_abs_err=[]
     depth_abs_err=[]
-    loss_dconf=[]
-    real_depth_abs_err=[]
     for batch_i, (imgs, targets, paths, shapes,_) in enumerate(dataloader):
-        input_targets=targets.numpy()
 
+        input_targets,width,height,imgs,targets=prepare_data_for_foward_pass(targets,device,imgs)
         
-        targets = targets.to(device)
-        imgs = imgs.to(device)
-        _, _, height, width = imgs.shape  # batch size, channels, height, width
+        output_roi,center_pred, depth_pred = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets)  # inference and training outputs
         
-        #xywh€[0,1] to xyxy in pixels
-        input_targets[:, [2+1, 4+1]] *= imgs.shape[2]
-        input_targets[:, [1+1, 3+1]] *= imgs.shape[3]
-        x_centers=input_targets[:,2].copy()
-        y_centers=input_targets[:,3].copy()
-        w=input_targets[:,4].copy()
-        h=input_targets[:,5].copy()
-        input_targets[:,2]=x_centers-w/2
-        input_targets[:,4]=x_centers+w/2
-        input_targets[:,3]=y_centers-h/2
-        input_targets[:,5]=y_centers+h/2
-        
-        
-        center_pred, depth_pred = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets)  # inference and training outputs
+        center_abs_err,depth_abs_err=compute_center_and_depth_errors(center_pred,depth_pred,center_abs_err,depth_abs_err,targets,(width,height))
+        stats,seen=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)
+    
+    (mp, mr, map, mf1, center_abs_err,depth_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,nc,names,seen)
+
+    return (mp, mr, map, mf1, center_abs_err,depth_abs_err), maps
 
 
 
-        # Run NMS
-#        output = non_max_suppression(inf_out, conf_thres=conf_thres, nms_thres=nms_thres)
-
-        # Statistics per image
-        labels=targets[:,1:]
-        tcls=labels[:,0]
-
-        tbox = xywh2xyxy(labels[:, 1:5])
-        tbox[:, [0, 2]] *= width
-        tbox[:, [1, 3]] *= height
-        
-        tcent=labels[:, 5:7]
-        tdepth=labels[:,7]
-
-        tcent[:, 0] *= width
-        tcent[:, 1] *= height
-
-        bceloss=nn.BCEWithLogitsLoss(reduction='sum')
-        depth_bin=[100] #Create the depth bin centers. The bin width is 24m
-        for idx_pred in range(len(center_pred)):
-            target_center=tcent[idx_pred]
-            predicted_center=center_pred[idx_pred]
-            
-            gt_depth=tdepth[idx_pred]
-            predicted_depth=depth_pred[idx_pred]
-            
-            
-            obj_cls=int(tcls[idx_pred])
-            predicted_center=predicted_center[obj_cls:obj_cls+2]
-            
-
-            
-            w_bbox=tbox[idx_pred][2].cpu().item()-tbox[idx_pred][0].cpu().item()
-            h_bbox=tbox[idx_pred][3].cpu().item()-tbox[idx_pred][1].cpu().item()
-            centerbbox_x=tbox[idx_pred][0].cpu().item()+w_bbox/2
-            centerbbox_y=tbox[idx_pred][1].cpu().item()+h_bbox/2
-            
-            predicted_center[0]=predicted_center[0]*w_bbox+centerbbox_x
-            predicted_center[1]=predicted_center[1]*h_bbox+centerbbox_y
-            
-
-            center_abs_err.append(torch.mean(torch.tensor([abs(abs(predicted_center[0]-target_center[0])/target_center[0]),abs(abs(predicted_center[1]-target_center[1])/target_center[1])])))
-            depth_abs_err.append(abs(abs(predicted_depth-gt_depth)/(gt_depth+0.00001)))
-
-            
-            
-
-
-        
-        
-
-
-
-    # Return results
-    maps = np.zeros(nc) + map
-    if len(center_abs_err)>0:
-        center_abs_err=torch.mean(torch.tensor(center_abs_err)[torch.isfinite(torch.tensor(center_abs_err))]).cpu().item()
-        depth_abs_err=torch.mean(torch.tensor(depth_abs_err)[torch.isfinite(torch.tensor(depth_abs_err))]).cpu().item()
-        if math.isnan(depth_abs_err):
-            print("nan")
-
-    else:
-        center_abs_err=0
-        depth_abs_err=0
-        mean_real_depth_abs_err=0
-        loss_dconf=0
-    return (center_abs_err,depth_abs_err,depth_abs_err,depth_abs_err)
 
 
 if __name__ == '__main__':

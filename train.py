@@ -340,25 +340,29 @@ def train(
                 
                 if type(model) is nn.parallel.DistributedDataParallel:
                 
-                    results = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
+                    results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
-                    results_training = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
+                    results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
                 else:
-                    results = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
+                    results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
-                    results_training = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
+                    results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
                                               model=model,
                                               conf_thres=0.1)
             # Write epoch results
             with open(result_path, 'a') as file:
-                file.write(s + '%11.3g' * 4 % results + '\n')  # P, R, mAP, F1, test_loss, center_abs_err, dconf_loss, depth_abs_err, "real" depth_abs_err
+                file.write(s +'|||'+ '%11.3g' * 6 % results + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err
 
-            with open("result_training"+str(opt.run_id)+".txt", 'a') as file:
-                file.write('%g/%g' % (epoch, epochs - 1) + '%11.3g' * 3 % (results_training[-1], results[-1],mloss[-1].item())+'\n')  #training_abs,test_abs,loss,mAP
+            with open(result_path.split('.')[0]+"_training.txt", 'a') as file:
+                file.write(s +'|||'+ '%11.3g' * 6 % results_training + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err
+
+
+#            with open("result_training"+str(opt.run_id)+".txt", 'a') as file:
+#                file.write('%g/%g' % (epoch, epochs - 1) + '%11.3g' * 5 % (results_training[-1], results[-1],mloss[-1].item(),results_training[2],results[2])+'\n')  #training_abs,test_abs,loss,training_mAP,test_map
 
             # Update best map
             fitness = results[-1]
