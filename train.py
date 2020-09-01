@@ -28,8 +28,36 @@ hyp = {'giou': 1.666,  # giou loss gain
        'momentum': 0.90,  # SGD momentum
        'weight_decay': 0.0005}  # optimizer weight decay
 
+def print_mutation(hyp, results):
+    # Write mutation results
+    a = '%11s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
+    b = '%11.4g' * len(hyp) % tuple(hyp.values())  # hyperparam values
+    c = '%11.3g' * len(results) % results  # results (P, R, mAP, F1, test_loss)
+    print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
 
-#os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+    if opt.bucket:
+        os.system('gsutil cp gs://%s/evolve.txt .' % opt.bucket)  # download evolve.txt
+        with open('evolve.txt', 'a') as f:  # append result
+            f.write(c + b + '\n')
+        os.system('gsutil cp evolve.txt gs://%s' % opt.bucket)  # upload evolve.txt
+    else:
+        with open('evolve.txt', 'a') as f:
+            f.write(c + b + '\n')
+
+def setup_net_transfert(model):
+    model.transfer=True
+    model.eval()
+    if type(model) is nn.parallel.DistributedDataParallel:
+        model.module.depth_pred.train()
+        model.module.featurePooling.train()
+        
+    else:
+        model.depth_pred.train()
+        model.featurePooling.train()
+    return model
+
+
+
 def check_updated_grad(previous_state_dict,model):
     list_k=[k for k,v in previous_state_dict.items()]
     previous_model_state={k: v for k,v in previous_state_dict.items()}
@@ -37,6 +65,124 @@ def check_updated_grad(previous_state_dict,model):
     for k in actual_model_state:
         if not torch.all(torch.eq(actual_model_state[k], previous_model_state[k])).cpu().item():
             print("%s updated"%k)
+
+def print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path):
+    # Print batch results
+    mloss = (mloss * i + loss_items.cpu()) / (i + 1)  # update mean losses
+    loss_scheduler.append(mloss[-1])
+    # s = ('%8s%12s' + '%10.3g' * 7) % ('%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), time.time() - t)
+    for x in optimizer.param_groups:
+        s = ('%8s%12s' + '%10.3g' * 11) % (
+            '%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), img_size, x['lr'])
+    with open(log_path, 'a') as logfile:
+        logfile.write(s+"\n")
+    return mloss,loss_scheduler,s
+
+def compute_batch_loss(pred,pred_center,depth_pred, targets, model,imgs,calib,opt):
+    # Compute loss
+    try:
+        loss, loss_items = compute_loss(pred,pred_center,depth_pred, targets, model,imgs.shape[2:],calib, giou_loss=not opt.xywh)
+        return loss,loss_items
+    except:
+        with open("debug_"+str(opt.run_id)+".txt",'a') as f:
+            f.write("error in loss\n")
+        return None,None
+
+def prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,multi_scale,img_size_min,img_size_max,idx_train,paths,img_size):
+    input_targets=targets.numpy()
+    targets = targets.to(device)
+    
+
+    # Multi-Scale training TODO: short-side to 32-multiple https://github.com/ultralytics/yolov3/issues/358
+    if multi_scale:
+        if (i + nb * epoch) / accumulate % 10 == 0:  #  adjust (67% - 150%) every 10 batches
+            img_size = random.choice(range(img_size_min, img_size_max + 1)) * 32
+            # print('img_size = %g' % img_size)
+        scale_factor = img_size / max(imgs.shape[-2:])
+        imgs = F.interpolate(imgs, scale_factor=scale_factor, mode='bilinear', align_corners=False)
+        
+    
+    #xywh€[0,1] to xyxy in pixels
+    input_targets[:, [2+1, 4+1]] *= imgs.shape[2]
+    input_targets[:, [1+1, 3+1]] *= imgs.shape[3]
+    x_centers=input_targets[:,2].copy()
+    y_centers=input_targets[:,3].copy()
+    w=input_targets[:,4].copy()
+    h=input_targets[:,5].copy()
+    input_targets[:,2]=x_centers-w/2
+    input_targets[:,4]=x_centers+w/2
+    input_targets[:,3]=y_centers-h/2
+    input_targets[:,5]=y_centers+h/2
+
+    
+    with open("log_time"+idx_train+str(opt.run_id)+".txt",'a') as f:
+        f.write("step %i\n"%i)
+        f.write('Paths:\n'+str(paths)+'\n')
+    
+    return imgs,targets,input_targets,img_size
+
+def run_test_and_save(model,optimizer,s,data_cfg,batch_size,cfg,log_path,result_path,best_fitness,epoch,epochs,save_freq,latest,best):
+    with open(log_path, 'a') as logfile:
+        logfile.write("testing \n")
+    with torch.no_grad():
+        
+        if type(model) is nn.parallel.DistributedDataParallel:
+        
+            results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
+                                      model=model,
+                                      conf_thres=0.1)
+            results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
+                                      model=model,
+                                      conf_thres=0.1)
+        else:
+            results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
+                                      model=model,
+                                      conf_thres=0.1)
+            results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
+                                      model=model,
+                                      conf_thres=0.1)
+    # Write epoch results
+    with open(result_path, 'a') as file:
+        file.write(s +'|||'+ '%11.3g' * 6 % results + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err
+    
+    with open(result_path.split('.')[0]+"_training.txt", 'a') as file:
+        file.write(s +'|||'+ '%11.3g' * 6 % results_training + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err
+    
+    # Update best map
+    fitness = results[-1]
+    if fitness < best_fitness and fitness!=0:
+        print("best error replaced by %f"%fitness)
+        best_fitness = fitness
+    save = ((not opt.nosave) and (epoch%save_freq==0)) or ((not opt.evolve) and (epoch == epochs - 1))
+    if save:
+        with open(log_path, 'a') as logfile:
+            logfile.write("saving...\n")
+        with open(result_path, 'r') as file:
+            # Create checkpoint
+            chkpt = {'epoch': epoch,
+                 'best_fitness': best_fitness,
+                     'training_results': file.read(),
+                 'model': model.module.state_dict() if type(
+                     model) is nn.parallel.DistributedDataParallel else model.state_dict(),
+                 'optimizer': optimizer.state_dict()}
+
+        # Save latest checkpoint
+        torch.save(chkpt, latest)
+        if opt.bucket:
+            os.system('gsutil cp %s gs://%s' % (latest, opt.bucket))  # upload to bucket
+#
+        # Save best checkpoint
+        if not math.isnan(fitness):
+            if best_fitness == fitness:
+                torch.save(chkpt, best)
+        
+        # Update best loss
+#        fitness = results[4]
+#        if not math.isnan(fitness):
+#            if fitness < best_fitness:
+#                best_fitness = fitness
+    return results,best_fitness
+
 
 def train(
         cfg,
@@ -124,8 +270,8 @@ def train(
         for f in glob.glob('*_batch*.jpg') + glob.glob('results.txt'):
             os.remove(f)
 
-    min_lr=1e-10*hyp['lr0']
-#    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[round(opt.epochs * x) for x in (0.8, 0.9)], gamma=0.1)
+    min_lr=1e-4*hyp['lr0']
+
     scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min',verbose=True,min_lr=min_lr)
     scheduler.last_epoch = start_epoch - 1
 
@@ -148,7 +294,7 @@ def train(
                                 rank=0)  # distributed training node rank
     
         model = torch.nn.parallel.DistributedDataParallel(model,find_unused_parameters = False)
-#        sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+
 
     # Dataloader
     dataloader = DataLoader(dataset,
@@ -172,98 +318,44 @@ def train(
     # Start training
     model_info(model, report='summary')  # 'full' or 'summary'
     nb = len(dataloader)
-    maps = np.zeros(nc)  # mAP per class
     results = (0, 0, 0, 0, 0)  # P, R, mAP, F1, test_loss
-    n_burnin=-1
-    t, t0 = time.time(), time.time()
+    t0 = time.time()
     with open(log_path, 'a') as logfile:
         logfile.write("nb epochs : %i\n"%epochs)
         
-
+    #Init the model weights
     model.depth_pred.init_weights()
+    
     for epoch in range(start_epoch, epochs):
         loss_scheduler=[]
         model.train()
         if opt.transfer:
-            model.transfer=True
-            model.eval()
-            if type(model) is nn.parallel.DistributedDataParallel:
-                model.module.depth_pred.train()
-                model.module.featurePooling.train()
-                
-            else:
-                model.depth_pred.train()
-                model.featurePooling.train()
-#                model.Yolov3.train()
+            model=setup_net_transfert(model)
 
         with open(log_path, 'a') as logfile:
             logfile.write("Epoch: %i"%epoch)
 
-        # Update scheduler
-#        if epoch>0:
-#            scheduler.step(loss_scheduler)
-        
         # Freeze backbone at epoch 0, unfreeze at epoch 1 (optional)
         if freeze_backbone and epoch < 2:
             for name, p in model.named_parameters():
                 if int(name.split('.')[1]) < cutoff:  # if layer < 75
                     p.requires_grad = False if epoch == 0 else True
-
         mloss = torch.zeros(8)  # mean losses
-        
-        
-        
+
         for i, (imgs, targets, paths, _,calib) in enumerate(dataloader):
+            
             imgs = imgs.to(device)
-            
-            
             if opt.depth_aug:
                 targets=rois_augmentation_for_depth(targets,0.2,0.02)
-                
             if imgs.shape[0]<torch.cuda.device_count():
                 continue
             if imgs.shape[0]!=opt.batch_size:
                 continue
-#                imgs=imgs[:int(imgs.shape[0]/torch.cuda.device_count())*torch.cuda.device_count(),...]
-#                targets=targets[:int(targets.shape[0]/torch.cuda.device_count())*torch.cuda.device_count(),...]
-
             if len(targets)==0:
                 continue
-            input_targets=targets.numpy()
-            targets = targets.to(device)
-            
-
-            # Multi-Scale training TODO: short-side to 32-multiple https://github.com/ultralytics/yolov3/issues/358
-            if multi_scale:
-                if (i + nb * epoch) / accumulate % 10 == 0:  #  adjust (67% - 150%) every 10 batches
-                    img_size = random.choice(range(img_size_min, img_size_max + 1)) * 32
-                    # print('img_size = %g' % img_size)
-                scale_factor = img_size / max(imgs.shape[-2:])
-                imgs = F.interpolate(imgs, scale_factor=scale_factor, mode='bilinear', align_corners=False)
-                
-            
-            #xywh€[0,1] to xyxy in pixels
-            input_targets[:, [2+1, 4+1]] *= imgs.shape[2]
-            input_targets[:, [1+1, 3+1]] *= imgs.shape[3]
-            x_centers=input_targets[:,2].copy()
-            y_centers=input_targets[:,3].copy()
-            w=input_targets[:,4].copy()
-            h=input_targets[:,5].copy()
-            input_targets[:,2]=x_centers-w/2
-            input_targets[:,4]=x_centers+w/2
-            input_targets[:,3]=y_centers-h/2
-            input_targets[:,5]=y_centers+h/2
-
-            # SGD burn-in
-            if epoch == 0 and i <= n_burnin:
-                lr = hyp['lr0'] * (i / n_burnin) ** 4
-                for x in optimizer.param_groups:
-                    x['lr'] = lr
-            
-            with open("log_time"+idx_train+str(opt.run_id)+".txt",'a') as f:
-                f.write("step %i\n"%i)
-                f.write('Paths:\n'+str(paths)+'\n')
-            
+        
+            imgs,targets,input_targets,img_size=prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,
+                                        multi_scale,img_size_min,img_size_max,idx_train,paths,img_size)
             # Run model
             t_pred=time.time()
             pred,pred_center,depth_pred = model(imgs,targets=input_targets)
@@ -272,17 +364,9 @@ def train(
             with open("log_time"+idx_train+str(opt.run_id)+".txt",'a') as f:
                 f.write("tpred %f\n"%t_pred)
 
-
-            # Compute loss
-            try:
-                loss, loss_items = compute_loss(pred,pred_center,depth_pred, targets, model,imgs.shape[2:],calib, giou_loss=not opt.xywh)
-            except:
-                with open("debug_"+str(opt.run_id)+".txt",'a') as f:
-                    f.write("error in loss\n")
+            loss,loss_items=compute_batch_loss(pred,pred_center,depth_pred, targets, model,imgs,calib,opt)
+            if loss is None:
                 continue
-#            if loss.cpu().item()>100:
-#                print("ehhh")
-                
             if torch.isnan(loss):
                 with open(log_path, 'a') as logfile:
                     logfile.write('WARNING: nan loss detected, ending training \n')
@@ -301,24 +385,13 @@ def train(
 
                 f.write("tback %f\n\n"%t_back)
 
-
             # Accumulate gradient for x batches before optimizing
             if (i + 1) % accumulate == 0 or (i + 1) == nb:
                 optimizer.step()
                 optimizer.zero_grad()
+                
+            mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path)
             
-            # Print batch results
-            mloss = (mloss * i + loss_items.cpu()) / (i + 1)  # update mean losses
-            loss_scheduler.append(mloss[-1])
-            # s = ('%8s%12s' + '%10.3g' * 7) % ('%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), time.time() - t)
-            for x in optimizer.param_groups:
-                s = ('%8s%12s' + '%10.3g' * 11) % (
-                    '%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), img_size, x['lr'])
-            del pred,pred_center
-            t = time.time()
-            with open(log_path, 'a') as logfile:
-                    logfile.write(s+"\n")
-#            pbar.set_description(s)  # print(s)
 
         loss_scheduler=torch.mean(torch.tensor(loss_scheduler)).item()
         print("Epoch loss:"+str(loss_scheduler))
@@ -327,110 +400,22 @@ def train(
         dt = (time.time() - t0) / 3600
         with open(log_path, 'a') as logfile:
             logfile.write('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, dt))
-#        torch.cuda.synchronize()
+
+            
         if hyp['lr0']<min_lr*10:
             save_freq=1
         else:
             save_freq=10
         # Calculate mAP (always test final epoch, skip first 5 if opt.nosave)
         if (not (opt.notest or (opt.nosave and epoch < 10)) and epoch%save_freq==0) or (epoch == epochs - 1):
-            with open(log_path, 'a') as logfile:
-                logfile.write("testing \n")
-            with torch.no_grad():
-                
-                if type(model) is nn.parallel.DistributedDataParallel:
-                
-                    results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
-                                              model=model,
-                                              conf_thres=0.1)
-                    results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
-                                              model=model,
-                                              conf_thres=0.1)
-                else:
-                    results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
-                                              model=model,
-                                              conf_thres=0.1)
-                    results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
-                                              model=model,
-                                              conf_thres=0.1)
-            # Write epoch results
-            with open(result_path, 'a') as file:
-                file.write(s +'|||'+ '%11.3g' * 6 % results + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err
+            results,best_fitness=run_test_and_save(model,optimizer,s,data_cfg,batch_size,cfg,log_path,result_path,best_fitness,epoch,epochs,save_freq,latest,best)
 
-            with open(result_path.split('.')[0]+"_training.txt", 'a') as file:
-                file.write(s +'|||'+ '%11.3g' * 6 % results_training + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err
-
-
-#            with open("result_training"+str(opt.run_id)+".txt", 'a') as file:
-#                file.write('%g/%g' % (epoch, epochs - 1) + '%11.3g' * 5 % (results_training[-1], results[-1],mloss[-1].item(),results_training[2],results[2])+'\n')  #training_abs,test_abs,loss,training_mAP,test_map
-
-            # Update best map
-            fitness = results[-1]
-            if fitness < best_fitness and fitness!=0:
-                print("best error replaced by %f"%fitness)
-                best_fitness = fitness
-
-        # Update best loss
-#        fitness = results[4]
-#        if not math.isnan(fitness):
-#            if fitness < best_fitness:
-#                best_fitness = fitness
-
-
-        # Save training results
-
-        save = ((not opt.nosave) and (epoch%save_freq==0)) or ((not opt.evolve) and (epoch == epochs - 1))
-        if save:
-            with open(log_path, 'a') as logfile:
-                logfile.write("saving...\n")
-            with open(result_path, 'r') as file:
-                # Create checkpoint
-                chkpt = {'epoch': epoch,
-                     'best_fitness': best_fitness,
-                         'training_results': file.read(),
-                     'model': model.module.state_dict() if type(
-                         model) is nn.parallel.DistributedDataParallel else model.state_dict(),
-                     'optimizer': optimizer.state_dict()}
-
-            # Save latest checkpoint
-            torch.save(chkpt, latest)
-            if opt.bucket:
-                os.system('gsutil cp %s gs://%s' % (latest, opt.bucket))  # upload to bucket
-#
-            # Save best checkpoint
-            if not math.isnan(fitness):
-                if best_fitness == fitness:
-                    torch.save(chkpt, best)
-
-            # Save backup every 50 epochs (optional)
-#            if epoch > 0 and epoch % 50 == 0:
-#                torch.save(chkpt, weights + 'backup%g.pt' % epoch)
-
-        
-        
-#            torch.cuda.empty_cache()
-        # Delete checkpoint
-#        del chkpt
     with open(log_path, 'a') as logfile:
         logfile.write("ending \n")
     return results
 
 
-def print_mutation(hyp, results):
-    # Write mutation results
-    a = '%11s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
-    b = '%11.4g' * len(hyp) % tuple(hyp.values())  # hyperparam values
-    c = '%11.3g' * len(results) % results  # results (P, R, mAP, F1, test_loss)
-    print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
 
-    if opt.bucket:
-        os.system('gsutil cp gs://%s/evolve.txt .' % opt.bucket)  # download evolve.txt
-        with open('evolve.txt', 'a') as f:  # append result
-            f.write(c + b + '\n')
-        os.system('gsutil cp evolve.txt gs://%s' % opt.bucket)  # upload evolve.txt
-    else:
-        with open('evolve.txt', 'a') as f:
-            f.write(c + b + '\n')
 
 
 if __name__ == '__main__':
