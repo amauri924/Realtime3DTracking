@@ -430,6 +430,8 @@ class Darknet(nn.Module):
             mask_3=mask_1&mask_2
             targets=targets[mask_3]
             roi=targets[:,2:6]
+            if len(roi)==0:
+                return rois,torch.tensor([]),torch.tensor([])
             pooled_features=self.featurePooling(features, roi)
             depth_pred=self.depth_pred(pooled_features)
             pooled_features=self.top_layer(pooled_features) # Run the final layers 

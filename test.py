@@ -196,11 +196,12 @@ def test(
     dataset = LoadImagesAndLabels(test_path, img_size, batch_size)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            num_workers=28,
+                            num_workers=24,
                             pin_memory=True,
                             collate_fn=dataset.collate_fn)
 
     seen = 0
+    print("model device:"+str(device))
     model.eval()
     coco91class = coco80_to_coco91_class()
     print(('%30s' + '%10s' * 6) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1'))
@@ -209,7 +210,11 @@ def test(
     center_abs_err=[]
     depth_abs_err=[]
     for batch_i, (imgs, targets, paths, shapes,_) in enumerate(dataloader):
-
+        with open("debug.txt","a") as f:
+            f.write("batch_i:"+str(batch_i))
+        if len(targets)==0:
+            print("skipping empty target")
+            continue
         input_targets,width,height,imgs,targets=prepare_data_for_foward_pass(targets,device,imgs)
         
         output_roi,center_pred, depth_pred = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets)  # inference and training outputs

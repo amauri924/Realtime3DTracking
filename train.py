@@ -12,6 +12,9 @@ import test as test  # import test.py to get mAP after each epoch
 from models import *
 from utils.datasets import *
 from utils.utils import *
+import sys
+
+sys.path.append("/save/2020010/amauri03/package_perso")
 
 #      0.109      0.297       0.15      0.126       7.04      1.666      4.062     0.1845       42.6       3.34      12.61      8.338     0.2705      0.001         -4        0.9     0.0005   320 giou + best_anchor False
 hyp = {'giou': 1.666,  # giou loss gain
@@ -127,12 +130,11 @@ def run_test_and_save(model,optimizer,s,data_cfg,batch_size,cfg,log_path,result_
     with torch.no_grad():
         
         if type(model) is nn.parallel.DistributedDataParallel:
-        
             results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
-                                      model=model,
+                                      model=model.module,
                                       conf_thres=0.1)
             results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
-                                      model=model,
+                                      model=model.module,
                                       conf_thres=0.1)
         else:
             results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
@@ -149,7 +151,7 @@ def run_test_and_save(model,optimizer,s,data_cfg,batch_size,cfg,log_path,result_
         file.write(s +'|||'+ '%11.3g' * 6 % results_training + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err
     
     # Update best map
-    fitness = results[-1]
+    fitness = results[-1]+(1-results[2])
     if fitness < best_fitness and fitness!=0:
         print("best error replaced by %f"%fitness)
         best_fitness = fitness
@@ -176,11 +178,6 @@ def run_test_and_save(model,optimizer,s,data_cfg,batch_size,cfg,log_path,result_
             if best_fitness == fitness:
                 torch.save(chkpt, best)
         
-        # Update best loss
-#        fitness = results[4]
-#        if not math.isnan(fitness):
-#            if fitness < best_fitness:
-#                best_fitness = fitness
     return results,best_fitness
 
 
@@ -284,6 +281,20 @@ def train(
                                   augment=False,
                                   rect=opt.rect)  # rectangular training
 
+    #Init the model weights
+    model.depth_pred.init_weights()
+
+    # Mixed precision training https://github.com/NVIDIA/apex
+    mixed_precision = True
+    if mixed_precision:
+        try:
+            from apex import amp
+            model, optimizer = amp.initialize(model, optimizer, opt_level='O1', verbosity=0)
+            print("using mixed precision")
+        except:  # not installed: install help: https://github.com/NVIDIA/apex/issues/259
+            mixed_precision = False
+            print("using standard precision")
+
     # Initialize distributed training
     if torch.cuda.device_count() > 1:
         with open(log_path, 'w') as logfile:
@@ -293,7 +304,7 @@ def train(
                                 world_size=1,  # number of nodes for distributed training
                                 rank=0)  # distributed training node rank
     
-        model = torch.nn.parallel.DistributedDataParallel(model,find_unused_parameters = False)
+        model = torch.nn.parallel.DistributedDataParallel(model,find_unused_parameters = True)
 
 
     # Dataloader
@@ -305,15 +316,7 @@ def train(
                             collate_fn=dataset.collate_fn)
 #                            sampler=sampler)
 
-    # Mixed precision training https://github.com/NVIDIA/apex
-    mixed_precision = True
-    if mixed_precision:
-        try:
-            from apex import amp
-            model, optimizer = amp.initialize(model, optimizer, opt_level='O1', verbosity=0)
-            print("using mixed precision")
-        except:  # not installed: install help: https://github.com/NVIDIA/apex/issues/259
-            mixed_precision = False
+
 
     # Start training
     model_info(model, report='summary')  # 'full' or 'summary'
@@ -323,8 +326,6 @@ def train(
     with open(log_path, 'a') as logfile:
         logfile.write("nb epochs : %i\n"%epochs)
         
-    #Init the model weights
-    model.depth_pred.init_weights()
     
     for epoch in range(start_epoch, epochs):
         loss_scheduler=[]
@@ -343,7 +344,6 @@ def train(
         mloss = torch.zeros(8)  # mean losses
 
         for i, (imgs, targets, paths, _,calib) in enumerate(dataloader):
-            
             imgs = imgs.to(device)
             if opt.depth_aug:
                 targets=rois_augmentation_for_depth(targets,0.2,0.02)
@@ -421,19 +421,19 @@ def train(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=5000, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=3,
+    parser.add_argument('--epochs', type=int, default=500, help='number of epochs')
+    parser.add_argument('--batch-size', type=int, default=56,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
-    parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=800, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--depth_aug', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=False, help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=0, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=24, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')
