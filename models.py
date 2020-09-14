@@ -408,13 +408,24 @@ class Darknet(nn.Module):
         else:
             self.transfer=True
         if not self.training and not self.transfer:
+            t_yol=time.time()
             _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
+            t_yol=time.time()-t_yol
+            t_proc_NMS=time.time()
             io=[]
             for line in io_orig:
                 line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
                 io.append(line)
             rois=torch.cat(io,1)
-            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+
+            newt_NMS=time.time()
+            rois = new_non_max_suppression(rois, conf_thres=conf_thres, iou_thres=nms_thres,multi_label=False)
+            newt_NMS=time.time()-newt_NMS
+            
+#            t_NMS=time.time()
+#            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+#            t_NMS=time.time()-t_NMS
+            
             
             for i,roi in enumerate(rois):
                 if roi is None:
@@ -432,12 +443,15 @@ class Darknet(nn.Module):
             roi=targets[:,2:6]
             if len(roi)==0:
                 return rois,torch.tensor([]),torch.tensor([])
+            t_proc_NMS=time.time()-t_proc_NMS
+            t_end=time.time()
             pooled_features=self.featurePooling(features, roi)
             depth_pred=self.depth_pred(pooled_features)
             pooled_features=self.top_layer(pooled_features) # Run the final layers 
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             del pooled_features
             del features
+            t_end=time.time()-t_end
             return rois,center_pred,depth_pred
         
         else:

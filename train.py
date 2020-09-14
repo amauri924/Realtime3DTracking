@@ -14,7 +14,7 @@ from utils.datasets import *
 from utils.utils import *
 import sys
 
-sys.path.append("/save/2020010/amauri03/package_perso")
+#sys.path.append("/save/2020010/amauri03/package_perso")
 
 #      0.109      0.297       0.15      0.126       7.04      1.666      4.062     0.1845       42.6       3.34      12.61      8.338     0.2705      0.001         -4        0.9     0.0005   320 giou + best_anchor False
 hyp = {'giou': 1.666,  # giou loss gain
@@ -81,17 +81,17 @@ def print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer
         logfile.write(s+"\n")
     return mloss,loss_scheduler,s
 
-def compute_batch_loss(pred,pred_center,depth_pred, targets, model,imgs,calib,opt):
+def compute_batch_loss(pred,pred_center,depth_pred, targets, model,imgs,calib,opt,resize_matrix):
     # Compute loss
     try:
-        loss, loss_items = compute_loss(pred,pred_center,depth_pred, targets, model,imgs.shape[2:],calib, giou_loss=not opt.xywh)
+        loss, loss_items = compute_loss(pred,pred_center,depth_pred, targets, model,imgs.shape[2:],calib,resize_matrix, giou_loss=not opt.xywh)
         return loss,loss_items
     except:
         with open("debug_"+str(opt.run_id)+".txt",'a') as f:
             f.write("error in loss\n")
         return None,None
 
-def prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,multi_scale,img_size_min,img_size_max,idx_train,paths,img_size):
+def prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized):
     input_targets=targets.numpy()
     targets = targets.to(device)
     
@@ -117,12 +117,15 @@ def prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,multi_
     input_targets[:,3]=y_centers-h/2
     input_targets[:,5]=y_centers+h/2
 
-    
+    pixel_to_normalized_resized=pixel_to_normalized_resized.to(device)
+    resize_matrix=pixel_to_normalized_resized
+    resize_matrix[:,0,:]*=imgs.shape[2]
+    resize_matrix[:,1,:]*=imgs.shape[3]
     with open("log_time"+idx_train+str(opt.run_id)+".txt",'a') as f:
         f.write("step %i\n"%i)
         f.write('Paths:\n'+str(paths)+'\n')
     
-    return imgs,targets,input_targets,img_size
+    return imgs,targets,input_targets,img_size,resize_matrix
 
 def run_test_and_save(model,optimizer,s,data_cfg,batch_size,cfg,log_path,result_path,best_fitness,epoch,epochs,save_freq,latest,best):
     with open(log_path, 'a') as logfile:
@@ -278,7 +281,7 @@ def train(
     dataset = LoadImagesAndLabels(train_path,
                                   img_size,
                                   batch_size,
-                                  augment=False,
+                                  augment=True,
                                   rect=opt.rect)  # rectangular training
 
     #Init the model weights
@@ -343,7 +346,8 @@ def train(
                     p.requires_grad = False if epoch == 0 else True
         mloss = torch.zeros(8)  # mean losses
 
-        for i, (imgs, targets, paths, _,calib) in enumerate(dataloader):
+        for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized) in enumerate(dataloader):
+
             imgs = imgs.to(device)
             if opt.depth_aug:
                 targets=rois_augmentation_for_depth(targets,0.2,0.02)
@@ -354,8 +358,8 @@ def train(
             if len(targets)==0:
                 continue
         
-            imgs,targets,input_targets,img_size=prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,
-                                        multi_scale,img_size_min,img_size_max,idx_train,paths,img_size)
+            imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,
+                                        multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
             # Run model
             t_pred=time.time()
             pred,pred_center,depth_pred = model(imgs,targets=input_targets)
@@ -364,7 +368,7 @@ def train(
             with open("log_time"+idx_train+str(opt.run_id)+".txt",'a') as f:
                 f.write("tpred %f\n"%t_pred)
 
-            loss,loss_items=compute_batch_loss(pred,pred_center,depth_pred, targets, model,imgs,calib,opt)
+            loss,loss_items=compute_batch_loss(pred,pred_center,depth_pred, targets, model,imgs,calib,opt,resize_matrix)
             if loss is None:
                 continue
             if torch.isnan(loss):
@@ -391,6 +395,15 @@ def train(
                 optimizer.zero_grad()
                 
             mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path)
+            
+#            chkpt = {'epoch': epoch,
+#                 'model': model.module.state_dict() if type(
+#                     model) is nn.parallel.DistributedDataParallel else model.state_dict(),
+#                 'optimizer': optimizer.state_dict()}
+#
+#            # Save latest checkpoint
+#            torch.save(chkpt, weights+"test_%i.pt"%i)
+            
             
 
         loss_scheduler=torch.mean(torch.tensor(loss_scheduler)).item()
@@ -422,18 +435,18 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
     parser.add_argument('--epochs', type=int, default=500, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=56,
+    parser.add_argument('--batch-size', type=int, default=3,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
+    parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
-    parser.add_argument('--img-size', type=int, default=800, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--depth_aug', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=False, help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=24, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')

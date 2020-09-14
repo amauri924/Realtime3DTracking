@@ -15,10 +15,11 @@ from matplotlib import pyplot as plt
 def homo_world_coords_to_pixel(point_homo, view_matrix, proj_matrix, width, height):
     viewed = view_matrix @ point_homo
     projected = proj_matrix @ viewed
-    projected /= projected[3]
+#    projected /= projected[3]
     to_pixel_matrix = np.array([
         [width/2, 0, 0, width/2],
         [0, -height/2, 0, height/2],
+        [0, 0   ,       0,   1]
     ])
     in_pixels = to_pixel_matrix @ projected
     return in_pixels
@@ -70,22 +71,43 @@ def construct_model_matrix(position, rotation):
 
     return view_matrix
 
+if os.path.exists("test.txt"):
+    os.remove("test.txt")
 
+with open("/home/antoine/remote_criann/GTA_Dataset/test_0.txt",'r') as f:
+    filelist=f.readlines()
+    
+    filelist=[base_name.split(" ")[0].split('\n')[0] for base_name in filelist]
+#    seq_list=[base_name.split("/")[-3] for base_name in filelist]
 
-seq_dir="/media/antoine/Save_HDD/GTA_Dataset/seq_00004/0/"
-out_dir="/media/antoine/Disque dur portable/Detection Methods/Yolov3 Pytorch new/yolov3-master/YoloV3_Annotation_Tool-master/Image_3d/"
-
-base_name_list=[base_name.split(".")[0] for base_name in os.listdir(seq_dir) if base_name.endswith(".jpg")]
+seq_dir="/home/antoine/remote_criann/GTA_Dataset/seq_00004/"
+cam_dir='0/'
+out_dir="/home/antoine/GTA_testing/"
+max_distance=200
+base_name_list=[os.path.join(seq_dir,cam_dir,base_name) for base_name in os.listdir(os.path.join(seq_dir,cam_dir)) if base_name.endswith(".jpg")]
 
 list_classes=[]
 
-for base_name in base_name_list:
-    rgb_path=os.path.join(seq_dir,base_name+".jpg")
-    json_path=os.path.join(seq_dir,"unoccluded",base_name+".json")
+for rgb_path in base_name_list:
+    json_path=os.path.join('/',*rgb_path.split('/')[:-1],"unoccluded",rgb_path.split('/')[-1].split('.')[0]+'.json')
+    seq_name=rgb_path.split('/')[-3]
+    cam_folder=rgb_path.split('/')[-2]
+    base_name=rgb_path.split('/')[-1].split('.')[0]
     
+    if not os.path.exists(os.path.join(out_dir,seq_name)):
+        os.mkdir(os.path.join(out_dir,seq_name))
+        
+    if not os.path.exists(os.path.join(out_dir,seq_name,cam_folder)):
+        os.mkdir(os.path.join(out_dir,seq_name,cam_folder))
+        
+        
+    out_txt=os.path.join(out_dir,seq_name,cam_folder,base_name+".txt")
+    out_img=os.path.join(out_dir,seq_name,cam_folder,base_name+".jpg")
+    out_npy=os.path.join(out_dir,seq_name,cam_folder,base_name+".npy")
     
-    out_txt=os.path.join(out_dir,base_name+".txt")
-    out_img=os.path.join(out_dir,base_name+".jpg")
+
+    with open("test.txt",'a') as f:
+        f.write(out_img+'\n')
     with open(json_path,"r") as f:
         data=json.load(f)
 
@@ -99,14 +121,20 @@ for base_name in base_name_list:
     
     visible_objects=data["unoccluded_targets"]
     
-    if len(visible_objects)>0:
-        shutil.copy(rgb_path,out_img)
+
+    shutil.copy(rgb_path,out_img)
     
+    to_pixel_matrix=np.array([
+        [width/2, 0, 0, width/2],
+        [0, height/2, 0, height/2],
+        [0, 0   ,       0,   1]])
     
-#    rgb = np.array(Image.open(rgb_path))
-#    fig = plt.figure(figsize=(16, 16))
-#    plt.title('RGB')
-#    plt.imshow(rgb)
+    cam_to_pixel=to_pixel_matrix@proj_matrix
+    cam_to_pixel[:,2]*=-1
+    
+    cam_to_pixel=np.vstack((cam_to_pixel, [0,0,0,1]))
+    pixel_to_cam=np.linalg.inv(cam_to_pixel)
+    np.save(out_npy,pixel_to_cam)
     
     for row in visible_objects:
         obj_class = row["type"]
@@ -114,7 +142,12 @@ for base_name in base_name_list:
             list_classes.append(obj_class)
         pos = np.array(row['pos'])
         center_pixel_pos = world_coords_to_pixel(pos, view_matrix, proj_matrix, width, height)
-        
+        dist=center_pixel_pos[-1]
+        if dist>max_distance:
+            continue
+        center_pixel_pos/=center_pixel_pos[-1]
+        center_pixel_pos=center_pixel_pos[:-1]
+
 #        plt.scatter(center_pixel_pos[0], center_pixel_pos[1])
         
         
@@ -132,8 +165,12 @@ for base_name in base_name_list:
         bbox_width*=1/width
         bbox_height*=1/width
         class_idx=list_classes.index(obj_class)
-        out_str=str(class_idx)+' '+str(xc)+' '+str(yc)+' '+str(bbox_width)+' '+str(bbox_height)+' '+str(center_pixel_pos[0]/width)+' '+str(center_pixel_pos[1]/height)+'\n'
+        out_str=str(class_idx)+' '+str(xc)+' '+str(yc)+' '+str(bbox_width)+' '+str(bbox_height)+' '+str(center_pixel_pos[0]/width)+' '+str(center_pixel_pos[1]/height)+' '+str(dist/max_distance)+'\n'
+        
+        
         
         with open(out_txt,"a") as f:
             f.writelines(out_str)
-#    plt.show()
+with open("list_classes.txt","w") as f:
+    for obj in list_classes:
+        f.write(obj+'\n')

@@ -10,7 +10,8 @@ import torch.nn as nn
 from PIL import Image
 #from tqdm import tqdm
 from pathlib import Path
-
+import time
+import torchvision
 from . import torch_utils  # , google_utils
 
 matplotlib.rc('font', **{'size': 11})
@@ -274,7 +275,7 @@ def get_depth(pred):
     depth=1/pred -1
     return depth
 
-def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib, giou_loss=True):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_matrix, giou_loss=True):  # predictions, targets, model
     calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
     lxy, lwh, lcls, lobj, lcent, ldepth,lconf_depth = ft([0]), ft([0]), ft([0]), ft([0]), ft([0]), ft([0]),ft([0])
@@ -347,36 +348,45 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib, giou_los
     rois[:,1]*=img_shape[1]
     rois[:,3]*=img_shape[1]
     
-    
+    #batch numbers
+    batch_num=targets[:,0].cpu().numpy()
     
     target_cent=targets[:,6:8].clone()
     target_cent[:,0]*=img_shape[0]
     target_cent[:,1]*=img_shape[1]
+
+    #Preparing the target location in the sensor coordinates
     target_sensor_coord=target_cent.clone()
-    target_cent=target_cent-rois[:,:2]
+    target_sensor_coord=torch.cat((torch.transpose(target_sensor_coord,0,1),torch.zeros((2,target_sensor_coord.shape[0])).to(target_sensor_coord.device)+1),dim=0)
+    for j in range(target_sensor_coord.shape[1]):
+        target_sensor_coord[:,j:j+1]=torch.matmul(torch.inverse(resize_matrix[int(batch_num[j]),:,:].to(target_sensor_coord.device)),target_sensor_coord[:,j:j+1])/1000 #to avoid FP16 overflow
+        target_sensor_coord[:3,j]*=gt_depth[j].T.clone()*200
     
+    #Preparing the target center
+    target_cent=target_cent-rois[:,:2]
     target_cent[:,0]/=rois[:,2]
     target_cent[:,1]/=rois[:,3]
-    
-    target_sensor_coord=torch.cat((torch.transpose(target_sensor_coord,0,1),torch.transpose(gt_depth.clone()*200, 0, 1)),dim=0)
-    target_sensor_coord=torch.cat((target_sensor_coord,torch.zeros((1,target_sensor_coord.shape[1])).to(target_sensor_coord.device)+1))
-    
-    pred_sensor_coord=pcent.clone()
+
+    #Preparing the prediction location in the sensor coordinates
+    pred_sensor_coord=pcent
     pred_sensor_coord[:,0]*=rois[:,2]
     pred_sensor_coord[:,1]*=rois[:,3]
-    
     pred_sensor_coord+=rois[:,:2]
-    pred_sensor_coord=torch.cat((torch.transpose(pred_sensor_coord,0,1),torch.transpose(p_depth.clone()*200, 0, 1)),dim=0)
-    pred_sensor_coord=torch.cat((pred_sensor_coord,torch.zeros((1,pred_sensor_coord.shape[1])).to(pred_sensor_coord.device)+1))
-    
-    batch_num=targets[:,0].cpu().numpy()
+    pred_sensor_coord=torch.cat((torch.transpose(pred_sensor_coord,0,1),torch.zeros((2,pred_sensor_coord.shape[0])).to(pred_sensor_coord.device)+1),dim=0)
+    for j in range(target_sensor_coord.shape[1]):
+        pred_sensor_coord[:,j:j+1]=torch.matmul(torch.inverse(resize_matrix[int(batch_num[j]),:,:].to(pred_sensor_coord.device)),pred_sensor_coord[:,j:j+1])/1000 #to avoid FP16 overflow
+        pred_sensor_coord[:3,j]*=p_depth[j].T*200
+
+    # Prepare the pred and taget location in the camera coordinates (in m)
     target_loc=ft([])
     pred_loc=ft([])
     for j in range(target_sensor_coord.shape[1]):
-        target_loc=torch.cat((target_loc,torch.matmul(calib[int(batch_num[j])],target_sensor_coord[:,j]).view(4,1)),dim=1)
-        pred_loc=torch.cat((pred_loc,torch.matmul(calib[int(batch_num[j])],pred_sensor_coord[:,j]).view(4,1)),dim=1)
-    target_loc=target_loc[:-1,:]
-    pred_loc=pred_loc[:-1,:]
+        target_loc=torch.cat((target_loc,torch.matmul(calib[int(batch_num[j])],target_sensor_coord[:,j:j+1]).float()),dim=1)
+        pred_loc=torch.cat((pred_loc,torch.matmul(calib[int(batch_num[j])],pred_sensor_coord[:,j:j+1])),dim=1)
+    target_loc=target_loc[:-1,:]/target_loc[-1,:]
+    pred_loc=pred_loc[:-1,:]/pred_loc[-1,:]
+    
+    
     lxy *= (k * h['giou']) / nt
     lwh *= (k * h['wh']) / nt
     lcls *= (k * h['cls']) / (nt * nc)
@@ -569,6 +579,106 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.5):
             output[image_i] = det_max[(-det_max[:, 4]).argsort()]  # sort
 
     return output
+
+def box_iou(box1, box2):
+    # https://github.com/pytorch/vision/blob/master/torchvision/ops/boxes.py
+    """
+    Return intersection-over-union (Jaccard index) of boxes.
+    Both sets of boxes are expected to be in (x1, y1, x2, y2) format.
+    Arguments:
+        box1 (Tensor[N, 4])
+        box2 (Tensor[M, 4])
+    Returns:
+        iou (Tensor[N, M]): the NxM matrix containing the pairwise
+            IoU values for every element in boxes1 and boxes2
+    """
+
+    def box_area(box):
+        # box = 4xn
+        return (box[2] - box[0]) * (box[3] - box[1])
+
+    area1 = box_area(box1.t())
+    area2 = box_area(box2.t())
+
+    # inter(N,M) = (rb(N,M,2) - lt(N,M,2)).clamp(0).prod(2)
+    inter = (torch.min(box1[:, None, 2:], box2[:, 2:]) - torch.max(box1[:, None, :2], box2[:, :2])).clamp(0).prod(2)
+    return inter / (area1[:, None] + area2 - inter)  # iou = inter / (area1 + area2 - inter)
+
+def new_non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, multi_label=True, classes=None, agnostic=False):
+    """
+    Performs  Non-Maximum Suppression on inference results
+    Returns detections with shape:
+        nx6 (x1, y1, x2, y2, conf, cls)
+    """
+
+    # Settings
+    merge = True  # merge for best mAP
+    min_wh, max_wh = 2, 4096  # (pixels) minimum and maximum box width and height
+    time_limit = 10.0  # seconds to quit after
+
+    t = time.time()
+    nc = prediction[0].shape[1] - 5  # number of classes
+    multi_label &= nc > 1  # multiple labels per box
+    output = [None] * prediction.shape[0]
+    for xi, x in enumerate(prediction):  # image index, image inference
+        # Apply constraints
+        x = x[x[:, 4] > conf_thres]  # confidence
+        x = x[((x[:, 2:4] > min_wh) & (x[:, 2:4] < max_wh)).all(1)]  # width-height
+
+        # If none remain process next image
+        if not x.shape[0]:
+            continue
+
+        # Compute conf
+        x[..., 5:] *= x[..., 4:5]  # conf = obj_conf * cls_conf
+
+        # Box (center x, center y, width, height) to (x1, y1, x2, y2)
+        box = xywh2xyxy(x[:, :4])
+
+        # Detections matrix nx6 (xyxy, conf, cls)
+        if multi_label:
+            i, j = (x[:, 5:] > conf_thres).nonzero().t()
+            x = torch.cat((box[i], x[i, j + 5].unsqueeze(1), j.float().unsqueeze(1)), 1)
+        else:  # best class only
+            conf, j = x[:, 5:].max(1)
+            x = torch.cat((box,x[..., 4:5], conf.unsqueeze(1), j.float().unsqueeze(1)), 1)[conf > conf_thres]
+            
+        # Filter by class
+        if classes:
+            x = x[(j.view(-1, 1) == torch.tensor(classes, device=j.device)).any(1)]
+
+        # Apply finite constraint
+        # if not torch.isfinite(x).all():
+        #     x = x[torch.isfinite(x).all(1)]
+
+        # If none remain process next image
+        n = x.shape[0]  # number of boxes
+        if not n:
+            continue
+
+        # Sort by confidence
+        # x = x[x[:, 4].argsort(descending=True)]
+
+        # Batched NMS
+        c = x[:, 5] * 0 if agnostic else x[:, 5]  # classes
+        boxes, scores = x[:, :4].clone() , x[:, 4]  # boxes (offset by class), scores
+        i = torchvision.ops.boxes.nms(boxes, scores, iou_thres)
+        if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
+            try:  # update boxes as boxes(i,4) = weights(i,n) * boxes(n,4)
+                iou = box_iou(boxes[i], boxes) > iou_thres  # iou matrix
+                weights = iou * scores[None]  # box weights
+                x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
+                # i = i[iou.sum(1) > 1]  # require redundancy
+            except:  # possible CUDA error https://github.com/ultralytics/yolov3/issues/1139
+                print(x, i, x.shape, i.shape)
+                pass
+
+        output[xi] = x[i]
+        if (time.time() - t) > time_limit:
+            break  # time limit exceeded
+
+    return output
+
 
 
 def get_yolo_layers(model):

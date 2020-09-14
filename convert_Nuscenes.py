@@ -135,7 +135,7 @@ def xyxy2xywh(bbox):
     
 
 
-nusc = NuScenes(version='v1.0-mini', dataroot='/home/antoine/remote_criann/Nuscenes', verbose=True)
+nusc = NuScenes(version='v1.0-trainval', dataroot='/home/antoine/remote_criann/Nuscenes', verbose=True)
 
 scenes=nusc.scene
 sample_list=nusc.sample
@@ -158,16 +158,18 @@ for scene in scenes:
         
         ego_pose = nusc.get('ego_pose', cam_front_data['ego_pose_token'])
         cal_sensor = nusc.get('calibrated_sensor', cam_front_data['calibrated_sensor_token'])
-        
-        car_from_senor = transform_matrix(cal_sensor['translation'], Quaternion(cal_sensor['rotation']), inverse=False)
-        
-        global_from_car = transform_matrix(ego_pose['translation'], Quaternion(ego_pose['rotation']), inverse=False)
-        
-        global_from_sensor=global_from_car @ car_from_senor
-        np.save("/home/antoine/test_img_NS/scene%i_sample%i.npy"%(scene_id,sample_id),global_from_sensor)
+
         
         data_path, boxes, camera_intrinsic = get_sample_data(nusc,cam_front_data['token'],
                                                                                    box_vis_level=BoxVisibility.ANY)
+        viewpad = np.eye(4)
+        viewpad[:camera_intrinsic.shape[0], :camera_intrinsic.shape[1]] = camera_intrinsic
+        
+        pixel_to_cam=np.linalg.inv(viewpad)
+        
+        np.save("/home/antoine/remote_criann/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.npy"%(scene_id,sample_id),pixel_to_cam)
+        
+
         visible_boxes=[]
         for box in boxes:
             
@@ -185,8 +187,8 @@ for scene in scenes:
         im = cv2.imread(data_path)
         im_width=im.shape[1]
         im_height=im.shape[0]
-        cv2.imwrite("/home/antoine/test_img_NS/scene%i_sample%i.png"%(scene_id,sample_id), im)
-        with open("/home/antoine/test_img_NS/scene%i_sample%i.txt"%(scene_id,sample_id),'w') as f:
+        cv2.imwrite("/home/antoine/remote_criann/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.png"%(scene_id,sample_id), im)
+        with open("/home/antoine/remote_criann/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.txt"%(scene_id,sample_id),'w') as f:
             for obj_class,bbox,center,dist in labels:
                 if obj_class in valid_classes:
                     obj_idx=valid_classes.index(obj_class)
@@ -202,7 +204,7 @@ for scene in scenes:
                     f.write(str(obj_idx)+' '+str(x)+' '+str(y)+' '+str(w)+' '+str(h)+' '+str(center_x)+' '+str(center_y)+' '+str(dist/max_distance)+'\n')
 
         with open("list.txt",'a') as f:
-            f.write("/home/antoine/test_img_NS/scene%i_sample%i.png"%(scene_id,sample_id)+'\n')
+            f.write("/save/2020010/amauri03/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.png"%(scene_id,sample_id)+'\n')
 
 
 

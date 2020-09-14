@@ -196,7 +196,7 @@ def test(
     dataset = LoadImagesAndLabels(test_path, img_size, batch_size)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            num_workers=24,
+                            num_workers=12,
                             pin_memory=True,
                             collate_fn=dataset.collate_fn)
 
@@ -209,7 +209,11 @@ def test(
     jdict, stats, ap, ap_class = [], [], [], []
     center_abs_err=[]
     depth_abs_err=[]
-    for batch_i, (imgs, targets, paths, shapes,_) in enumerate(dataloader):
+    for batch_i, (imgs, targets, paths, shapes,_,_) in enumerate(dataloader):
+        
+        if batch_i>100:
+            break
+        
         with open("debug.txt","a") as f:
             f.write("batch_i:"+str(batch_i))
         if len(targets)==0:
@@ -218,10 +222,10 @@ def test(
         input_targets,width,height,imgs,targets=prepare_data_for_foward_pass(targets,device,imgs)
         
         output_roi,center_pred, depth_pred = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets)  # inference and training outputs
-        
+
         center_abs_err,depth_abs_err=compute_center_and_depth_errors(center_pred,depth_pred,center_abs_err,depth_abs_err,targets,(width,height))
         stats,seen=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)
-    
+
     (mp, mr, map, mf1, center_abs_err,depth_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,nc,names,seen)
 
     return (mp, mr, map, mf1, center_abs_err,depth_abs_err), maps
@@ -237,7 +241,7 @@ if __name__ == '__main__':
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
     parser.add_argument('--weights', type=str, default='weights/best_1.1.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='iou threshold required to qualify as detected')
-    parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
+    parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.6, help='iou threshold for non-maximum suppression')
     parser.add_argument('--save-json', default=False, help='save a cocoapi-compatible JSON results file')
     parser.add_argument('--img-size', type=int, default=608, help='inference size (pixels)')

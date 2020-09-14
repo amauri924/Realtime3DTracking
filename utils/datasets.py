@@ -268,7 +268,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img_path = self.img_files[index]
         label_path = self.label_files[index]
         calib_path=self.img_files[index].split('.')[0]+'.npy'
-        calib=np.load(calib_path)
+        calib=np.load(calib_path).astype(np.float32)
 
         # Load image
         img = self.imgs[index]
@@ -304,6 +304,13 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         else:
             shape = self.img_size
             img, ratiow, ratioh, padw, padh = letterbox(img, new_shape=shape, mode='square')
+        
+
+#        pixel_to_normalized_resized=np.array([[ratiow,0,padw,0],[0,ratioh,padh,0],[0,0,1,0],[0,0,0,1]])
+        
+        
+        
+        pixel_to_normalized_resized=np.array([[ratiow/img.shape[0],0,padw/img.shape[0],0],[0,ratioh/img.shape[1],padh/img.shape[1],0],[0,0,1,0],[0,0,0,1]]).astype(np.float32)
 
         # Load labels
         labels = []
@@ -374,14 +381,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img = np.ascontiguousarray(img, dtype=np.float32)  # uint8 to float32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
 
-        return torch.from_numpy(img), labels_out, img_path, (h, w),torch.tensor(calib)
+        return torch.from_numpy(img), labels_out, img_path, (h, w),torch.tensor(calib),torch.tensor(pixel_to_normalized_resized)
 
     @staticmethod
     def collate_fn(batch):
-        img, label, path, hw,calib = list(zip(*batch))  # transposed
+        img, label, path, hw,calib,pixel_to_normalized_resized = list(zip(*batch))  # transposed
         for i, l in enumerate(label):
             l[:, 0] = i  # add target image index for build_targets()
-        return torch.stack(img, 0), torch.cat(label, 0), path, hw, torch.stack(calib,0)
+        return torch.stack(img, 0), torch.cat(label, 0), path, hw, torch.stack(calib,0),torch.stack(pixel_to_normalized_resized,0)
 
 
 def letterbox(img, new_shape=416, color=(127.5, 127.5, 127.5), mode='auto'):
