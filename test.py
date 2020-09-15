@@ -211,11 +211,8 @@ def test(
     depth_abs_err=[]
     for batch_i, (imgs, targets, paths, shapes,_,_) in enumerate(dataloader):
         
-        if batch_i>100:
-            break
-        
         with open("debug.txt","a") as f:
-            f.write("batch_i:"+str(batch_i))
+            f.write("batch_i:"+str(batch_i)+'\n')
         if len(targets)==0:
             print("skipping empty target")
             continue
@@ -225,9 +222,7 @@ def test(
 
         center_abs_err,depth_abs_err=compute_center_and_depth_errors(center_pred,depth_pred,center_abs_err,depth_abs_err,targets,(width,height))
         stats,seen=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)
-
     (mp, mr, map, mf1, center_abs_err,depth_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,nc,names,seen)
-
     return (mp, mr, map, mf1, center_abs_err,depth_abs_err), maps
 
 

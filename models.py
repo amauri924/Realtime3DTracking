@@ -418,13 +418,13 @@ class Darknet(nn.Module):
                 io.append(line)
             rois=torch.cat(io,1)
 
-            newt_NMS=time.time()
-            rois = new_non_max_suppression(rois, conf_thres=conf_thres, iou_thres=nms_thres,multi_label=False)
-            newt_NMS=time.time()-newt_NMS
+#            newt_NMS=time.time()
+#            rois = new_non_max_suppression(rois, conf_thres=conf_thres, iou_thres=nms_thres,multi_label=False)
+#            newt_NMS=time.time()-newt_NMS
             
-#            t_NMS=time.time()
-#            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
-#            t_NMS=time.time()-t_NMS
+            t_NMS=time.time()
+            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+            t_NMS=time.time()-t_NMS
             
             
             for i,roi in enumerate(rois):

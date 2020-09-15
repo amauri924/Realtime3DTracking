@@ -136,7 +136,9 @@ def run_test_and_save(model,optimizer,s,data_cfg,batch_size,cfg,log_path,result_
             results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                       model=model.module,
                                       conf_thres=0.1)
-            results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
+            with open("debug.txt","a") as f:
+                f.write("Testing on the train split\n")
+            results_training,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                       model=model.module,
                                       conf_thres=0.1)
         else:
@@ -435,18 +437,18 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
     parser.add_argument('--epochs', type=int, default=500, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=3,
+    parser.add_argument('--batch-size', type=int, default=56,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
-    parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=800, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--depth_aug', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=False, help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=12, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=16, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')
