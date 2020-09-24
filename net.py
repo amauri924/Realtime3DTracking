@@ -10,8 +10,6 @@ import torch
 import torch.nn as nn
 from torch.hub import load_state_dict_from_url
 import torchvision
-from efficientnet_pytorch import EfficientNet
-
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -36,6 +34,16 @@ def resnet18(pretrained=False, progress=True, **kwargs):
     return _resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress,
                    **kwargs)
 
+def resnet152(pretrained=False, progress=True, **kwargs):
+    r"""ResNet-152 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet('resnet152', Bottleneck, [3, 8, 36, 3], pretrained, progress,
+                   **kwargs)
 
 def resnet34(pretrained=False, progress=True, **kwargs):
     r"""ResNet-34 model from
@@ -276,7 +284,7 @@ class ResNet(nn.Module):
 class Depth_Layer(nn.Module):
     def __init__(self):
         super(Depth_Layer, self).__init__()
-        num_channel=1536
+        num_channel=2048
 
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
@@ -313,14 +321,13 @@ class Depth_Layer(nn.Module):
 class model(nn.Module):
     def __init__(self):
         super(model, self).__init__()
-        self.feature_extractor=EfficientNet.from_pretrained('efficientnet-b3')
-#        self.resnet101=resnet50(pretrained=True)
+        self.resnet=resnet50(pretrained=True)
         self.depth_pred=Depth_Layer()
 
         
     def forward(self,x,target_bbox):
         target_bbox=torch.from_numpy(target_bbox).to(x.device).type(x.type())
-        features=self.feature_extractor(x)
+        features=self.resnet(x)
         pooled_features=torchvision.ops.roi_pool(features, target_bbox, (7,7), spatial_scale=1/32.0)
         depth_prediction=self.depth_pred(pooled_features)
         return depth_prediction

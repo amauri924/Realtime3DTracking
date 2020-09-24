@@ -14,9 +14,15 @@ import torch
 import os
 from utils.datasets import *
 #from net import Depth_Model
+#import net_ResNeST as net
 import net
 from utils.utils import *
 #from apex import amp
+from test import *
+
+
+
+
 
 
 def compute_loss(pred,target):
@@ -58,23 +64,26 @@ def train(data_cfg,img_size,epochs,batch_size=1,accumulate=1):
     #Input file path
     data_dict=parse_data_cfg(data_cfg)
     train_path = data_dict['train']
-    
+    test_path= data_dict['valid']
     start_epoch=0
     
     #Create model and optimizer
     model=net.model().to(device)
     
     
+    
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
                            lr=1e-3,  weight_decay=1e-2)
  
-#    model, optimizer = amp.initialize(model, optimizer, opt_level='O1', verbosity=0)
     scaler = torch.cuda.amp.GradScaler() 
     
-    
     #Create LR scheduler
-    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min',verbose=True,min_lr=1e-7)
+#    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, 'min',verbose=True,min_lr=1e-7)
+    
+    scheduler= lr_scheduler.CosineAnnealingWarmRestarts(optimizer,T_0=50)
     scheduler.last_epoch = start_epoch - 1
+    
+    lr_values=np.geomspace(1e-7,1e-1,100)
     
     #Create dataloader
     dataset = LoadImagesAndLabels(train_path,
@@ -90,10 +99,17 @@ def train(data_cfg,img_size,epochs,batch_size=1,accumulate=1):
     
     # Start training
     nb = len(dataloader)
+    
+    
     for epoch in range(start_epoch, epochs):
         epoch_loss=[]
         rel_err=[]
-#        depth_model.train()
+        
+#        #set new learning rate
+#        for param_group in optimizer.param_groups:
+#            param_group['lr'] = lr_values[epoch]
+        
+        
         model.train()
         for i, (imgs, targets, paths, _,calib) in enumerate(dataloader):
             if len(targets)==0:
@@ -114,13 +130,13 @@ def train(data_cfg,img_size,epochs,batch_size=1,accumulate=1):
             
             targets=targets.to(device).half()
             imgs = imgs.to(device).half()
-            with torch.cuda.amp.autocast(): 
+            with torch.cuda.amp.autocast():
                 pred=model(imgs,input_targets[:,np.array([0, 2, 3,4,5 ])])
             
-            rel_err_=compute_rel_err(pred,targets)
-            for value in rel_err_:
-                rel_err.append(value.float())
-            with torch.cuda.amp.autocast(): 
+                rel_err_=compute_rel_err(pred,targets)
+                for value in rel_err_:
+                    rel_err.append(value.float())
+                
                 loss=compute_loss(pred,targets)
             loss_print=loss.clone().detach()
             with open("log.txt",'a') as f:
@@ -128,21 +144,33 @@ def train(data_cfg,img_size,epochs,batch_size=1,accumulate=1):
             epoch_loss.append(loss_print.item())
             scaler.scale(loss).backward() 
             
-#            with amp.scale_loss(loss, optimizer) as scaled_loss:
-#                scaled_loss.backward()
-            
             if (i + 1) % accumulate == 0 or (i + 1) == nb:
                 scaler.step(optimizer)
+                scaler.update() 
                 optimizer.zero_grad()
-            scaler.update()
-            
         rel_err=torch.mean(torch.tensor(rel_err))
         epoch_loss=np.mean(np.array(epoch_loss))
-        print("Epoch loss:"+str(epoch_loss))
-        print("Relative error:"+str(rel_err))
-        scheduler.step(epoch_loss)
+#        print("Epoch loss:"+str(epoch_loss))
+        with open("log_rel_err.txt","a") as f:
+            f.write(str(rel_err)+'\n')
+            
+        with open("epoch_loss.txt","a") as f:
+            f.write(str(epoch_loss)+'\n')
+#        print("Relative error:"+str(rel_err))
+#        scheduler.step(epoch_loss)
+        scheduler.step()
+        new_lr=scheduler.get_last_lr()
+        with open("lr.txt","a") as f:
+#            f.write("LR:"+str(optimizer.param_groups[0]['lr'])+'\n')
+            f.write("LR:"+str(new_lr)+'\n')
+        test_results=test(model,device,batch_size,test_path)
         
+        with open("val_results.txt","a") as f:
+#            f.write("Epoch"+ str(epoch)+": "+str(test_results))
+            f.write(str(test_results)+'\n')
         
-        
-        
-train('data/GTA_3dcent.data',416,500)
+
+
+if __name__ == "__main__":
+
+    train('data/GTA_3dcent.data',416,500)
