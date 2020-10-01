@@ -26,27 +26,27 @@ from test import *
 
 
 
-def compute_loss(pred,pred_class,target):
-    criterion = torch.nn.CrossEntropyLoss()
+def compute_loss(pred,target):
     l1_loss=torch.nn.L1Loss()
     depth_target=target[:,8:]
-    class_target=target[:,1:2].long()
-    classification_loss=criterion(pred_class, class_target.view(-1))
-    pred_depth=pred.gather(1,class_target)
-    loss=l1_loss(pred_depth,depth_target)+0.01*classification_loss
+    
+    with open("loss_log.txt",'a') as f:
+        f.write("pred:"+str(pred)+'\n')
+        f.write("target:"+str(depth_target)+'\n\n\n')
+    
+    loss=l1_loss(pred,depth_target)
     return loss
 
 def compute_rel_err(pred,target):
     depth_target=target[:,8:].clone().detach()*200
-    class_target=target[:,1:2].clone().detach()
-    pred=pred.clone().detach()*200
-    pred_depth=pred.gather(1,class_target.long())
+    pred_depth=pred.clone().detach()*200
+    
     rel_err=abs(depth_target-pred_depth)/depth_target
     
     return rel_err.split(1)
     
 
-def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
+def train(data_cfg,img_size,epochs,batch_size=64,accumulate=1):
     
     idx_train=str(batch_size)+'.'+str(accumulate)
     log_path='log_'+idx_train+'.txt'
@@ -66,11 +66,10 @@ def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
     data_dict=parse_data_cfg(data_cfg)
     train_path = data_dict['train']
     test_path= data_dict['valid']
-    num_class=int(data_dict['classes'])
     start_epoch=0
     
     #Create model and optimizer
-    model=net.model(num_class).to(device)
+    model=net.model().to(device)
     
     
     
@@ -86,7 +85,7 @@ def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
 #    scheduler= lr_scheduler.CosineAnnealingWarmRestarts(optimizer,T_0=50)
 #    scheduler.last_epoch = start_epoch - 1
     
-    lr_values=np.geomspace(1e-7,10,100)
+    lr_values=np.geomspace(1e-10,1,100)
     
     #Create dataloader
     dataset = LoadImagesAndLabels(train_path,
@@ -95,7 +94,7 @@ def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
                                   rect=False)  # rectangular training
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            num_workers=0,
+                            num_workers=8,
                             shuffle=False,  # Shuffle=True unless rectangular training is used
                             pin_memory=True,
                             collate_fn=dataset.collate_fn)
@@ -103,19 +102,18 @@ def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
     # Start training
     nb = len(dataloader)
     
-    batch_num=0
+    
     for epoch in range(start_epoch, epochs):
         epoch_loss=[]
         rel_err=[]
         
-#        #set new learning rate
+        #set new learning rate
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr_values[epoch]
         
         
         model.train()
         for i, (imgs, targets, paths, _,calib) in enumerate(dataloader):
-            batch_num+=1
             if len(targets)==0:
                 continue
             input_targets=targets.numpy()
@@ -135,18 +133,13 @@ def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
             targets=targets.to(device).half()
             imgs = imgs.to(device).half()
             with torch.cuda.amp.autocast():
-                pred_depth,class_pred=model(imgs,input_targets[:,np.array([0, 2, 3,4,5 ])])
+                pred=model(imgs,input_targets[:,np.array([0, 2, 3,4,5 ])])
             
-                
-            
-                rel_err_=compute_rel_err(pred_depth,targets)
+                rel_err_=compute_rel_err(pred,targets)
                 for value in rel_err_:
                     rel_err.append(value.float())
-                rel_err_per_batch=torch.mean(torch.tensor(rel_err))
-                with open("log_rel_err_per_batch.txt","a") as f:
-                    f.write(str(rel_err_per_batch)+'\n')
                 
-                loss=compute_loss(pred_depth,class_pred,targets)
+                loss=compute_loss(pred,targets)
             loss_print=loss.clone().detach()
             with open("log.txt",'a') as f:
                 f.write(str(i)+': '+str(loss_print)+'\n')
@@ -175,14 +168,14 @@ def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
         with open("lr.txt","a") as f:
 #            f.write("LR:"+str(optimizer.param_groups[0]['lr'])+'\n')
             f.write("LR:"+str(new_lr)+'\n')
-        test_results,test_loss=test(model,device,batch_size,test_path)
+        test_results=test(model,device,batch_size,test_path)
         
         with open("val_results.txt","a") as f:
 #            f.write("Epoch"+ str(epoch)+": "+str(test_results))
-            f.write(str(test_results)+' '+str(test_loss)+'\n')
+            f.write(str(test_results)+'\n')
         
 
 
 if __name__ == "__main__":
 
-    train("data/3dcent-NS.data",416,500)
+    train('data/GTA_3dcent.data',416,500)

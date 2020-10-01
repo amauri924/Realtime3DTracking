@@ -282,10 +282,10 @@ class ResNet(nn.Module):
         return self._forward_impl(x)
 
 class Depth_Layer(nn.Module):
-    def __init__(self,nc):
+    def __init__(self):
         super(Depth_Layer, self).__init__()
-        num_channel=2048
-        self.nc=nc
+        num_channel=512
+
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn1=nn.BatchNorm2d(num_channel)
@@ -297,7 +297,7 @@ class Depth_Layer(nn.Module):
         self.conv3=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, nc, kernel_size=1,
+        self.conv4=nn.Conv2d(num_channel, 1, kernel_size=1,
                   stride=1, padding=0, bias=True)
         self.sig=nn.Sigmoid()
 
@@ -312,35 +312,22 @@ class Depth_Layer(nn.Module):
         if x.shape[0]>1:
             x=self.bn3(x)
         x=self.conv4(x)
-        x=self.sig(x).view(-1,self.nc)
+        x=self.sig(x).view(-1,1)
 
         return x
 
-class Classifier(nn.Module):
-    def __init__(self,nc):
-        super(Classifier, self).__init__()
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc=nn.Linear(2048, nc)
-    
-    def forward(self,x):
-        x=self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x=self.fc(x)
-        return x
+
 
 class model(nn.Module):
-    def __init__(self,nc):
+    def __init__(self):
         super(model, self).__init__()
-        self.resnet=resnet50(pretrained=True)
-        self.depth_pred=Depth_Layer(nc)
-        self.classifier=Classifier(nc)
-        self.nc=nc
+        self.resnet=resnet34(pretrained=True)
+        self.depth_pred=Depth_Layer()
 
         
     def forward(self,x,target_bbox):
         target_bbox=torch.from_numpy(target_bbox).to(x.device).type(x.type())
         features=self.resnet(x)
         pooled_features=torchvision.ops.roi_pool(features, target_bbox, (7,7), spatial_scale=1/32.0)
-        class_prediction=self.classifier(pooled_features)
         depth_prediction=self.depth_pred(pooled_features)
-        return depth_prediction,class_prediction
+        return depth_prediction

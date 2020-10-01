@@ -284,7 +284,7 @@ class ResNet(nn.Module):
 class Depth_Layer(nn.Module):
     def __init__(self,nc):
         super(Depth_Layer, self).__init__()
-        num_channel=2048
+        num_channel=512
         self.nc=nc
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
@@ -320,7 +320,7 @@ class Classifier(nn.Module):
     def __init__(self,nc):
         super(Classifier, self).__init__()
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc=nn.Linear(2048, nc)
+        self.fc=nn.Linear(512, nc)
     
     def forward(self,x):
         x=self.avgpool(x)
@@ -331,7 +331,7 @@ class Classifier(nn.Module):
 class model(nn.Module):
     def __init__(self,nc):
         super(model, self).__init__()
-        self.resnet=resnet50(pretrained=True)
+        self.resnet=resnet34(pretrained=True)
         self.depth_pred=Depth_Layer(nc)
         self.classifier=Classifier(nc)
         self.nc=nc

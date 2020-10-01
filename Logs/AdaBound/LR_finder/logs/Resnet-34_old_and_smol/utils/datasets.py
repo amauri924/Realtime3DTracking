@@ -179,11 +179,11 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img = self.imgs[index]
         if img is None:
             img = cv2.imread(img_path)  # BGR
-            
+            h,w,_=img.shape
             assert img is not None, 'File Not Found ' + img_path
             if self.n < 1001:
                 self.imgs[index] = img  # cache image into memory
-        h,w,_=img.shape
+
         # Load labels
         labels = []
         if os.path.isfile(label_path):

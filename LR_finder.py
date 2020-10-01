@@ -1,7 +1,7 @@
 
 # -*- coding: utf-8 -*-
 """
-Created on Thu Sep 24 07:49:52 2020
+Created on Wed Sep 30 10:43:40 2020
 
 @author: antoine
 """
@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-
-training_root_folder="/home/antoine/remote_criann/barebone_depth/AdaBound/LR_decay/"
+training_root_folder="/home/antoine/remote_criann/barebone_depth/AdaBound/LR_finder/"
+#training_folders=["/home/antoine/Realtime3DTracking/"]
 
 training_folders=[os.path.join(training_root_folder,folder) for folder in os.listdir(training_root_folder) if os.path.isdir(os.path.join(training_root_folder,folder))]
 
@@ -42,45 +42,10 @@ for i,folder in enumerate(training_folders):
     method_name=folder.split('/')[-1]
     
     
-    plt.plot(all_val[i],'+',label=method_name)
-
-plt.ylim(ymax = 0.2, ymin = 0)
+    plt.plot(all_lr[i],all_train_err[i],'+',label=method_name)
+plt.xscale("log")
+#plt.xlim(xmax = 1e-5, xmin = 0)
 plt.legend()
 plt.title('Validation with LR decay')
-plt.savefig("validation.png",dpi=200)
+plt.savefig("loss_LR.png",dpi=200)
 plt.show()
-
-
-
-for i,folder in enumerate(training_folders):
-    
-    method_name=folder.split('/')[-1]
-    
-    
-    plt.plot(all_train_err[i],'+',label=method_name)
-
-plt.ylim(ymax = 0.2, ymin = 0)
-plt.legend()
-plt.title('Training Relative error with LR decay')
-plt.savefig("training err.png",dpi=200)
-plt.show()
-
-with open("best_errors.txt",'w') as f:
-    f.write("Backbone"+"     "+"Validation"+"     "+"Training"+'\n')
-    for i,folder in enumerate(training_folders):
-        method_name=folder.split('/')[-1]
-        min_val=str(np.min(all_val[i]))
-        min_train=str(np.min(all_train_err[i]))
-        f.write(method_name+':      '+min_val+'       '+min_train+'\n')
-
-for i,folder in enumerate(training_folders):
-    
-    method_name=folder.split('/')[-1]
-    
-    
-    plt.plot(all_lr[i],'+',label=method_name)
-
-plt.legend()
-plt.title('LR')
-plt.savefig("lr.png",dpi=200)
-#plt.show()

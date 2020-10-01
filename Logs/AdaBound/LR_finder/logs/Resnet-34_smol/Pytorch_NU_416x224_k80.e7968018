@@ -1,0 +1,14 @@
+load compilers/gnu/7.3.0 environment
+load cuda 10.0 environment
+load python3 3.6.9 for Deep Learning environment (with numpy 1.15.1, Keras 2.2.5, scikit-learn 0.21.3, tensorflow-gpu 1.14.0, torch 1.2.0, more details: pip list)
+
+Loading python3-DL/3.6.9
+  Loading requirement: compilers/gnu/7.3.0 cuda/10.0
+/save/2020010/amauri03/package_perso/torch_optimizer/adabound.py:139: UserWarning: This overload of add is deprecated:
+	add(Number alpha, Tensor other)
+Consider using one of the following signatures instead:
+	add(Tensor other, *, Number alpha) (Triggered internally at  /pytorch/torch/csrc/utils/python_arg_parser.cpp:766.)
+  grad = grad.add(group['weight_decay'], p.data)
+srun: Job step aborted: Waiting up to 32 seconds for job step to finish.
+slurmstepd: error: *** JOB 7968018 ON my378 CANCELLED AT 2020-09-30T13:54:26 ***
+slurmstepd: error: *** STEP 7968018.0 ON my378 CANCELLED AT 2020-09-30T13:54:26 ***

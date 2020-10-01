@@ -46,7 +46,7 @@ def compute_rel_err(pred,target):
     return rel_err.split(1)
     
 
-def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
+def train(data_cfg,img_size,epochs,batch_size=64,accumulate=1):
     
     idx_train=str(batch_size)+'.'+str(accumulate)
     log_path='log_'+idx_train+'.txt'
@@ -86,7 +86,7 @@ def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
 #    scheduler= lr_scheduler.CosineAnnealingWarmRestarts(optimizer,T_0=50)
 #    scheduler.last_epoch = start_epoch - 1
     
-    lr_values=np.geomspace(1e-7,10,100)
+    lr_values=np.geomspace(1e-12,1e-2,500)
     
     #Create dataloader
     dataset = LoadImagesAndLabels(train_path,
@@ -95,7 +95,7 @@ def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
                                   rect=False)  # rectangular training
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            num_workers=0,
+                            num_workers=8,
                             shuffle=False,  # Shuffle=True unless rectangular training is used
                             pin_memory=True,
                             collate_fn=dataset.collate_fn)
@@ -185,4 +185,4 @@ def train(data_cfg,img_size,epochs,batch_size=2,accumulate=1):
 
 if __name__ == "__main__":
 
-    train("data/3dcent-NS.data",416,500)
+    train("data/GTA_3dcent.data",416,500)
