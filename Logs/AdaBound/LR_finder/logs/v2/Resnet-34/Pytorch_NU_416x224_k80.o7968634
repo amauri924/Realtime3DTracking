@@ -1,0 +1,19 @@
+Using CUDA device0 _CudaDeviceProperties(name='Tesla V100-SXM2-32GB', total_memory=32510MB)
+
+
+Nombre de fichiers restants dans /dlocal/run/7968634 : 
+NB_REMIND_FILE = 3 
+
+########################################
+   Comptabilité du calcul 7968634 
+########################################
+$ sacct --format=JobID,Partition,JobName,MaxRSS,MaxVMSize,NTasks,AllocCPUS,Start,End,Elapsed,AveCPU,MinCPU,ReqGRES,AllocGRES,NNodes,ExitCode,State -j 7968634
+       JobID  Partition    JobName     MaxRSS  MaxVMSize   NTasks  AllocCPUS               Start                 End    Elapsed     AveCPU     MinCPU      ReqGRES    AllocGRES   NNodes ExitCode      State 
+------------ ---------- ---------- ---------- ---------- -------- ---------- ------------------- ------------------- ---------- ---------- ---------- ------------ ------------ -------- -------- ---------- 
+7968634        gpu_v100 Pytorch_N+                                         7 2020-10-01T14:44:51 2020-10-01T21:19:31   06:34:40                              gpu:1        gpu:1        1      0:0  COMPLETED 
+7968634.bat+                 batch      3904K    155512K        1          7 2020-10-01T14:44:51 2020-10-01T21:19:31   06:34:40   00:00:00   00:00:00        gpu:1        gpu:1        1      0:0  COMPLETED 
+7968634.ext+                extern          0    107952K        1          7 2020-10-01T14:44:51 2020-10-01T21:19:32   06:34:41   00:00:00   00:00:00        gpu:1        gpu:1        1      0:0  COMPLETED 
+7968634.0                  python3  10296560K  67552412K        1          7 2020-10-01T14:44:52 2020-10-01T21:19:31   06:34:39 1-03:25:04 1-03:25:04        gpu:1        gpu:1        1      0:0  COMPLETED 
+
+Pour plus d'informations sur la comptabilité du calcul, merci de consulter la documentation http://www-tech.criann.fr ou le manuel 'man sacct'
+########################################

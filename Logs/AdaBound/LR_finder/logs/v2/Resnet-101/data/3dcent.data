@@ -1,0 +1,6 @@
+classes=2
+train=./data/3dcent/train.txt
+valid=./data/3dcent/test.txt
+names=data/3dcent.names
+backup=backup/
+top=2

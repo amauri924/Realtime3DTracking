@@ -1,0 +1,6 @@
+classes=4
+train=./data/adapt/train.txt
+valid=./data/adapt/test.txt
+names=./data/adapt.names
+backup=backup/
+top=2

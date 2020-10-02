@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-training_root_folder="/home/antoine/remote_criann/barebone_depth/AdaBound/LR_finder/"
+training_root_folder="/home/antoine/remote_criann/barebone_depth/AdaBound/Medium_training/LR_finder/"
 #training_folders=["/home/antoine/Realtime3DTracking/"]
 
 training_folders=[os.path.join(training_root_folder,folder) for folder in os.listdir(training_root_folder) if os.path.isdir(os.path.join(training_root_folder,folder))]
@@ -46,6 +46,6 @@ for i,folder in enumerate(training_folders):
 plt.xscale("log")
 #plt.xlim(xmax = 1e-5, xmin = 0)
 plt.legend()
-plt.title('Validation with LR decay')
+plt.title('LR finder')
 plt.savefig("loss_LR.png",dpi=200)
 plt.show()
