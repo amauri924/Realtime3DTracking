@@ -11,7 +11,7 @@ import numpy as np
 import os
 
 
-training_root_folder="/home/antoine/remote_criann/barebone_depth/AdaBound/LR_decay/"
+training_root_folder="/home/antoine/remote_criann/barebone_depth/AdaBound/CosineAnnealing/"
 
 training_folders=[os.path.join(training_root_folder,folder) for folder in os.listdir(training_root_folder) if os.path.isdir(os.path.join(training_root_folder,folder))]
 
@@ -30,7 +30,7 @@ for folder in training_folders:
         training_rel_err=np.array([float(num.split('\n')[0].split('(')[-1].split(')')[0]) for num in f.readlines()])
    
     with open(os.path.join(folder,"lr.txt"),"r") as f:
-        lr=np.array([float(num.split('\n')[0].split('[')[-1].split(']')[0].split(':')[1]) for num in f.readlines()])
+        lr=np.array([float(num.split('\n')[0].split('[')[-1].split(']')[0]) for num in f.readlines()])
     all_lr.append(lr)
     all_train_err.append(training_rel_err)
     
@@ -44,7 +44,7 @@ for i,folder in enumerate(training_folders):
     
     plt.plot(all_val[i],'+',label=method_name)
 
-plt.ylim(ymax = 0.2, ymin = 0)
+plt.ylim(ymax = 0.7, ymin = 0.1)
 plt.legend()
 plt.title('Validation with LR decay')
 plt.savefig("validation.png",dpi=200)
@@ -59,7 +59,7 @@ for i,folder in enumerate(training_folders):
     
     plt.plot(all_train_err[i],'+',label=method_name)
 
-plt.ylim(ymax = 0.2, ymin = 0)
+plt.ylim(ymax = 0.7, ymin = 0)
 plt.legend()
 plt.title('Training Relative error with LR decay')
 plt.savefig("training err.png",dpi=200)
@@ -69,8 +69,8 @@ with open("best_errors.txt",'w') as f:
     f.write("Backbone"+"     "+"Validation"+"     "+"Training"+'\n')
     for i,folder in enumerate(training_folders):
         method_name=folder.split('/')[-1]
-        min_val=str(np.min(all_val[i]))
-        min_train=str(np.min(all_train_err[i]))
+        min_val=str(np.nanmin(all_val[i]))
+        min_train=str(np.nanmin(all_train_err[i]))
         f.write(method_name+':      '+min_val+'       '+min_train+'\n')
 
 for i,folder in enumerate(training_folders):

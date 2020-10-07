@@ -9,3 +9,11 @@ weights/
 >>>>>>> Stashed changes
 
 *.png
+
+*.names
+
+*.data
+
+*.sh
+
+Logs/

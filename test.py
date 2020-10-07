@@ -25,7 +25,6 @@ def test(model,device,batch_size,test_path):
     model.eval()
     with torch.no_grad():
         rel_err=[]
-        epoch_loss=[]
         for i, (imgs, targets, paths, _,_) in enumerate(dataloader):
             if len(targets)==0:
                 continue
@@ -47,12 +46,10 @@ def test(model,device,batch_size,test_path):
             targets=targets.to(device).half()
             imgs = imgs.to(device).half()
             with torch.cuda.amp.autocast():
-                pred_depth,class_pred=model(imgs,input_targets[:,np.array([0, 2, 3,4,5 ])])
-                rel_err_=compute_rel_err(pred_depth,targets)
+                pred=model(imgs,input_targets[:,np.array([0, 2, 3,4,5 ])])
+                rel_err_=compute_rel_err(pred,targets)
             for value in rel_err_:
                 rel_err.append(value.float())
-            loss=compute_loss(pred_depth,class_pred,targets)
-            epoch_loss.append(loss.item())
-        epoch_loss=np.mean(np.array(epoch_loss))
+        
         rel_err=torch.mean(torch.tensor(rel_err))
-    return rel_err,epoch_loss
+    return rel_err

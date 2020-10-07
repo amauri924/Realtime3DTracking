@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from torch.hub import load_state_dict_from_url
 import torchvision
+from torch.cuda.amp import autocast
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -282,10 +283,10 @@ class ResNet(nn.Module):
         return self._forward_impl(x)
 
 class Depth_Layer(nn.Module):
-    def __init__(self,nc):
+    def __init__(self):
         super(Depth_Layer, self).__init__()
         num_channel=2048
-        self.nc=nc
+
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn1=nn.BatchNorm2d(num_channel)
@@ -297,7 +298,7 @@ class Depth_Layer(nn.Module):
         self.conv3=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, nc, kernel_size=1,
+        self.conv4=nn.Conv2d(num_channel, 1, kernel_size=1,
                   stride=1, padding=0, bias=True)
         self.sig=nn.Sigmoid()
 
@@ -312,35 +313,47 @@ class Depth_Layer(nn.Module):
         if x.shape[0]>1:
             x=self.bn3(x)
         x=self.conv4(x)
-        x=self.sig(x).view(-1,self.nc)
+        x=self.sig(x).view(-1,1)
 
         return x
 
-class Classifier(nn.Module):
-    def __init__(self,nc):
-        super(Classifier, self).__init__()
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc=nn.Linear(2048, nc)
-    
-    def forward(self,x):
-        x=self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x=self.fc(x)
-        return x
+
 
 class model(nn.Module):
-    def __init__(self,nc):
+    def __init__(self):
         super(model, self).__init__()
-        self.resnet=resnet50(pretrained=True)
-        self.depth_pred=Depth_Layer(nc)
-        self.classifier=Classifier(nc)
-        self.nc=nc
+        self.resnet=resnet101(pretrained=True)
+        self.depth_pred=Depth_Layer()
 
-        
+    @autocast()
     def forward(self,x,target_bbox):
+
         target_bbox=torch.from_numpy(target_bbox).to(x.device).type(x.type())
+        device_id=int(str(x.device)[-1])
+        
+#        with open(str(device_id)+".txt","w") as f:
+#            f.write("input_shape:"+str(x.shape)+'\n')
+        
+        
+        if target_bbox.shape[0]==0:
+            return torch.tensor([[]]).view(0,1).to(x.device).type(x.type())
+        
         features=self.resnet(x)
+        
+#        with open(str(device_id)+".txt","a") as f:
+#            f.write("features shape:"+str(features.shape)+'\n')
+#            f.write("target_bbox:"+str(target_bbox)+'\n')
+#            f.write("target_bbox_shape:"+str(target_bbox.shape)+'\n')
         pooled_features=torchvision.ops.roi_pool(features, target_bbox, (7,7), spatial_scale=1/32.0)
-        class_prediction=self.classifier(pooled_features)
+        
+#        with open(str(device_id)+".txt","a") as f:
+#            f.write("pooled_features:"+str(pooled_features)+'\n')
+#            f.write("pooled_features shape:"+str(pooled_features.shape)+'\n')
+
         depth_prediction=self.depth_pred(pooled_features)
-        return depth_prediction,class_prediction
+        
+#        with open(str(device_id)+".txt","a") as f:
+#            f.write("depth_prediction:"+str(depth_prediction)+'\n')
+#            f.write("depth_prediction shape:"+str(depth_prediction.shape)+'\n')
+        
+        return depth_prediction
