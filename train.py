@@ -89,7 +89,7 @@ def train(data_cfg,img_size,epochs,device,world_size,batch_size=16,accumulate=1)
     dataset = LoadImagesAndLabels(train_path,
                                   img_size,
                                   batch_size,
-                                  rect=False)  # rectangular training
+                                  rect=False,augment=True)  # rectangular training
     
     train_sampler = torch.utils.data.distributed.DistributedSampler(dataset,
                                                                 num_replicas=world_size,
@@ -99,7 +99,7 @@ def train(data_cfg,img_size,epochs,device,world_size,batch_size=16,accumulate=1)
     
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            num_workers=8,
+                            num_workers=7,
                             shuffle=False,  # Shuffle=True unless rectangular training is used
                             pin_memory=True,
                             collate_fn=dataset.collate_fn,
@@ -199,7 +199,7 @@ def train(data_cfg,img_size,epochs,device,world_size,batch_size=16,accumulate=1)
     #            f.write("LR:"+str(optimizer.param_groups[0]['lr'])+'\n')
                 f.write("LR:"+str(new_lr)+'\n')
             
-            test_results=test(model.module,device,batch_size,test_path).item()
+            test_results=test(model.module,device,batch_size,test_path,img_size).item()
             
             with open("val_results.txt","a") as f:
     #            f.write("Epoch"+ str(epoch)+": "+str(test_results))
@@ -218,21 +218,21 @@ def train(data_cfg,img_size,epochs,device,world_size,batch_size=16,accumulate=1)
                      'model': model.module.state_dict() if type(
                          model) is torch.nn.parallel.DistributedDataParallel else model.state_dict(),
                      'optimizer': optimizer.state_dict()}
-            print(chkpt)
+#            print(chkpt)
             torch.save(chkpt, "weights/latest.pt")
             if save_best:
                 torch.save(chkpt, "weights/best.pt")
             del chkpt
 
 def main():
-    world_size=4
+    world_size=torch.cuda.device_count()
     mp.spawn(example,
         args=(world_size,),
         nprocs=world_size,
         join=True)
 
 def example(rank, world_size):
-    train('data/GTA_3dcent.data',416,500,rank,world_size)
+    train('data/GTA_3dcent.data',640,100,rank,world_size)
 
 if __name__ == "__main__":
 

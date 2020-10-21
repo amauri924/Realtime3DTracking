@@ -8,8 +8,8 @@ Created on Fri Sep 25 14:14:35 2020
 
 import os
 
-file_path="/home/antoine/remote_criann/GTA_Dataset/train_0.txt"
-dir_criann="/save/2020010/amauri03/GTA_Preprocessed_v2/"
+file_path="/home/antoine/Realtime3DTracking/data/GTA_3dcent/test_0.txt"
+dir_criann="/home/antoine/remote_criann/GTA_Preprocessed_v2/"
 
 with open(file_path,'r') as f:
     files=[file.split(' ')[0] for file in f.readlines()]
@@ -23,4 +23,4 @@ for file in files:
 
 with open("new_paths_criann.txt","w") as f:
     for file in new_paths:
-        f.write(file+'\n')
+        f.write(file)

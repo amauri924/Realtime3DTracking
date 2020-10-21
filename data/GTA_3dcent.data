@@ -1,6 +1,7 @@
 classes=6
 train=data/GTA_3dcent/train.txt
 valid=data/GTA_3dcent/test.txt
+test=data/GTA_3dcent/test_0_remote.txt
 names=data/GTA_3dcent/3dcent-NS.names
 backup=backup/
 top=2
