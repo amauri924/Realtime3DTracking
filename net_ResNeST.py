@@ -511,10 +511,13 @@ class model(nn.Module):
         self.resnet=resnest50(pretrained=True)
         self.depth_pred=Depth_Layer()
 
-        
+    @autocast()
     def forward(self,x,target_bbox):
-        target_bbox=torch.from_numpy(target_bbox).to(x.device).type(x.type())
+        device_id=int(str(x.device)[-1])
+        if target_bbox.shape[0]==0:
+            return torch.tensor([[]]).view(0,1).to(x.device).type(x.type())
+        
         features=self.resnet(x)
-        pooled_features=torchvision.ops.roi_pool(features, target_bbox, (7,7), spatial_scale=1/32.0)
+        pooled_features=torchvision.ops.roi_align(features, target_bbox, (7,7), spatial_scale=1/32.0)
         depth_prediction=self.depth_pred(pooled_features)
         return depth_prediction
