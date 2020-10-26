@@ -19,6 +19,9 @@ import torch
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
 from PIL import Image, ExifTags
+import gc
+
+
 
 from utils.utils import xyxy2xywh, xywh2xyxy
 cv2.setNumThreads(0)
@@ -141,7 +144,6 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         mosaic = self.mosaic and random.random() < 0.8
         
         # Load labels
-        
         if os.path.isfile(label_path):
             x = self.labels[index]
             if x is None:  # labels not preloaded
@@ -149,7 +151,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     x = np.array([x.split() for x in f.read().splitlines()], dtype=np.float32)
                     self.labels[index] = x  # save for next time
         
-        if mosaic:
+        if mosaic and random.random() < 0.5:
             # Load mosaic
             img, labels = load_mosaic(self, index)
             # MixUp https://arxiv.org/pdf/1710.09412.pdf
@@ -163,35 +165,13 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         else:
             
             # Load image
-            img = self.imgs[index]
-            if img is None:
-                img = cv2.imread(img_path)  # BGR
-                assert img is not None, 'File Not Found ' + img_path
-                if self.n < 1001:
-                    self.imgs[index] = img  # cache image into memory
-            h, w, _ = img.shape
-            # Letterbox
-            if self.rect:
-#                shape = self.batch_shapes[self.batch[index]]
-                shape = self.img_size
-                img, ratiow, ratioh, padw, padh = letterbox(img, new_shape=shape, mode='rect')
-            else:
-                shape = self.img_size
-                img, ratiow, ratioh, padw, padh = letterbox(img, new_shape=shape, mode='square')
-            
+            img, ratiow, ratioh, padw, padh,h,w=load_image_and_resize(self,index,img_path)
 
+            # Normalized xywh to pixel xyxy format
             labels = np.array([])
             if os.path.isfile(label_path):
-                if x.size > 0:
-                    # Normalized xywh to pixel xyxy format
-                    labels = x.copy()
-                    labels[:, 1] = ratiow * w * (x[:, 1] - x[:, 3] / 2) + padw
-                    labels[:, 2] = ratioh * h * (x[:, 2] - x[:, 4] / 2) + padh
-                    labels[:, 3] = ratiow * w * (x[:, 1] + x[:, 3] / 2) + padw
-                    labels[:, 4] = ratioh * h * (x[:, 2] + x[:, 4] / 2) + padh
-                    
-                    labels[:, 5] = (ratiow * w * x[:, 5] + padw)
-                    labels[:, 6] = (ratioh * h * x[:, 6] + padh)
+                labels=normalized_xywh2xyxy(x,ratiow,ratioh,padw,padh,w,h,labels)
+
 
         if self.augment:
             # Augment colorspace
@@ -233,16 +213,11 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             labels_out[:, 1:] = torch.from_numpy(labels)
             del labels
 
-        #Resize image
-#        if self.rect:
-#            if h!=720 or w!=1280:
-#                img=cv2.resize(img,(1280,720))
-
         # Normalize
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img, dtype=np.float32)  # uint8 to float32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
-
+        gc.collect()
         return torch.from_numpy(img), labels_out, img_path, (h, w),torch.tensor(calib)
 
     @staticmethod
@@ -252,6 +227,39 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             l[:, 0] = i  # add target image index for build_targets()
         return torch.stack(img, 0), torch.cat(label, 0), path, hw, torch.stack(calib,0)
 
+
+def normalized_xywh2xyxy(x,ratiow,ratioh,padw,padh,w,h,labels):
+
+    if x.size > 0:
+        # Normalized xywh to pixel xyxy format
+        labels = x.copy()
+        labels[:, 1] = ratiow * w * (x[:, 1] - x[:, 3] / 2) + padw
+        labels[:, 2] = ratioh * h * (x[:, 2] - x[:, 4] / 2) + padh
+        labels[:, 3] = ratiow * w * (x[:, 1] + x[:, 3] / 2) + padw
+        labels[:, 4] = ratioh * h * (x[:, 2] + x[:, 4] / 2) + padh
+        
+        labels[:, 5] = (ratiow * w * x[:, 5] + padw)
+        labels[:, 6] = (ratioh * h * x[:, 6] + padh)
+    return labels
+
+
+def load_image_and_resize(self,index,img_path):
+    img = self.imgs[index]
+    if img is None:
+        img = cv2.imread(img_path)  # BGR
+        assert img is not None, 'File Not Found ' + img_path
+        if self.n < 1001:
+            self.imgs[index] = img  # cache image into memory
+    h, w, _ = img.shape
+    # Letterbox
+    if self.rect:
+    #                shape = self.batch_shapes[self.batch[index]]
+        shape = self.img_size
+        img, ratiow, ratioh, padw, padh = letterbox(img, new_shape=shape, mode='rect')
+    else:
+        shape = self.img_size
+        img, ratiow, ratioh, padw, padh = letterbox(img, new_shape=shape, mode='square')
+    return img, ratiow, ratioh, padw, padh,h,w
 
 def load_mosaic(self, index):
     # loads images in a mosaic

@@ -99,7 +99,7 @@ def train(data_cfg,img_size,epochs,device,world_size,batch_size=16,accumulate=1)
     
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            num_workers=7,
+                            num_workers=8,
                             shuffle=False,  # Shuffle=True unless rectangular training is used
                             pin_memory=True,
                             collate_fn=dataset.collate_fn,
@@ -129,7 +129,7 @@ def train(data_cfg,img_size,epochs,device,world_size,batch_size=16,accumulate=1)
         
         
         model.train()
-        for i, (imgs, targets, paths, _,calib) in enumerate(dataloader):
+        for i, (imgs, targets, paths, _,calib) in enumerate(tqdm(dataloader)):
             if len(targets)==0:
                 continue
             if imgs.shape[0]<torch.cuda.device_count():
@@ -140,32 +140,27 @@ def train(data_cfg,img_size,epochs,device,world_size,batch_size=16,accumulate=1)
 #            with open("debug"+str(device)+".txt","w") as f:
 #                f.write("target:"+str(targets)+'\n')
             
-            input_targets=targets.numpy()
+            input_targets=targets.clone()
             
             #xywh€[0,1] to xyxy in pixels
             input_targets[:, [2+1, 4+1]] *= imgs.shape[2]
             input_targets[:, [1+1, 3+1]] *= imgs.shape[3]
-            x_centers=input_targets[:,2].copy()
-            y_centers=input_targets[:,3].copy()
-            w=input_targets[:,4].copy()
-            h=input_targets[:,5].copy()
+            x_centers=input_targets[:,2].clone()
+            y_centers=input_targets[:,3].clone()
+            w=input_targets[:,4].clone()
+            h=input_targets[:,5].clone()
             input_targets[:,2]=x_centers-w/2
             input_targets[:,4]=x_centers+w/2
             input_targets[:,3]=y_centers-h/2
             input_targets[:,5]=y_centers+h/2
             
-            targets=targets.to(device).half()
-            imgs = imgs.to(device).half()
+            targets=targets.to(device)
+            imgs = imgs.to(device,non_blocking=True)
+            input_targets=input_targets.to(device,non_blocking=True)
 
             with torch.cuda.amp.autocast():
                 pred=model(imgs,input_targets[:,np.array([0, 2, 3,4,5 ])])
-#                
-#                with open("debug"+str(device)+".txt","a") as f:
-#                    f.write("target:"+str(input_targets[:,np.array([0, 2, 3,4,5 ])])+'\n')
-#                    f.write("pred shape:"+str(pred.shape)+'\n')
-                
-
-                rel_err_=compute_rel_err(pred,targets)
+                rel_err_=compute_rel_err(pred.float(),targets.float())
                 for value in rel_err_:
                     rel_err.append(value.float())
                 
@@ -211,8 +206,6 @@ def train(data_cfg,img_size,epochs,device,world_size,batch_size=16,accumulate=1)
                 best_fitness=test_results
                 save_best=True
                 
-                
-                
             chkpt = {'epoch': epoch,
                      'best_fitness': best_fitness,
                      'model': model.module.state_dict() if type(
@@ -226,13 +219,14 @@ def train(data_cfg,img_size,epochs,device,world_size,batch_size=16,accumulate=1)
 
 def main():
     world_size=torch.cuda.device_count()
-    mp.spawn(example,
-        args=(world_size,),
-        nprocs=world_size,
-        join=True)
-
+#    mp.spawn(example,
+#        args=(world_size,),
+#        nprocs=world_size,
+#        join=True)
+    example(0,world_size)
+    
 def example(rank, world_size):
-    train('data/GTA_3dcent.data',640,100,rank,world_size)
+    train('data/GTA_3dcent.data',640,200,rank,world_size)
 
 if __name__ == "__main__":
 

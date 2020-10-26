@@ -285,7 +285,7 @@ class ResNet(nn.Module):
 class Depth_Layer(nn.Module):
     def __init__(self):
         super(Depth_Layer, self).__init__()
-        num_channel=2048
+        num_channel=512
 
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
@@ -322,38 +322,16 @@ class Depth_Layer(nn.Module):
 class model(nn.Module):
     def __init__(self):
         super(model, self).__init__()
-        self.resnet=resnet101(pretrained=True)
+        self.resnet=resnet18(pretrained=True)
         self.depth_pred=Depth_Layer()
 
     @autocast()
     def forward(self,x,target_bbox):
-
-        target_bbox=torch.from_numpy(target_bbox).to(x.device).type(x.type())
         device_id=int(str(x.device)[-1])
-        
-#        with open(str(device_id)+".txt","w") as f:
-#            f.write("input_shape:"+str(x.shape)+'\n')
-        
-        
         if target_bbox.shape[0]==0:
             return torch.tensor([[]]).view(0,1).to(x.device).type(x.type())
         
         features=self.resnet(x)
-        
-#        with open(str(device_id)+".txt","a") as f:
-#            f.write("features shape:"+str(features.shape)+'\n')
-#            f.write("target_bbox:"+str(target_bbox)+'\n')
-#            f.write("target_bbox_shape:"+str(target_bbox.shape)+'\n')
-        pooled_features=torchvision.ops.roi_pool(features, target_bbox, (7,7), spatial_scale=1/32.0)
-        
-#        with open(str(device_id)+".txt","a") as f:
-#            f.write("pooled_features:"+str(pooled_features)+'\n')
-#            f.write("pooled_features shape:"+str(pooled_features.shape)+'\n')
-
+        pooled_features=torchvision.ops.roi_align(features, target_bbox, (7,7), spatial_scale=1/32.0)
         depth_prediction=self.depth_pred(pooled_features)
-        
-#        with open(str(device_id)+".txt","a") as f:
-#            f.write("depth_prediction:"+str(depth_prediction)+'\n')
-#            f.write("depth_prediction shape:"+str(depth_prediction.shape)+'\n')
-        
         return depth_prediction
