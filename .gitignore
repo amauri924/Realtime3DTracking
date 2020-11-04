@@ -9,3 +9,7 @@ weights/
 >>>>>>> Stashed changes
 
 *.png
+
+Logs/
+
+__pycache__/

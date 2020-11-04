@@ -2,32 +2,30 @@ import argparse
 #import json
 
 from torch.utils.data import DataLoader
-
+from tqdm import tqdm
 from models import *
 from utils.datasets import *
 from utils.utils import *
 
 def prepare_data_for_foward_pass(targets,device,imgs):
-    input_targets=targets.numpy()
-
-    
-    targets = targets.to(device)
-    imgs = imgs.to(device)
     _, _, height, width = imgs.shape  # batch size, channels, height, width
-    
+    input_targets=targets.clone()
+    targets = targets.to(device)
     #xywh€[0,1] to xyxy in pixels
     input_targets[:, [2+1, 4+1]] *= imgs.shape[2]
     input_targets[:, [1+1, 3+1]] *= imgs.shape[3]
-    x_centers=input_targets[:,2].copy()
-    y_centers=input_targets[:,3].copy()
-    w=input_targets[:,4].copy()
-    h=input_targets[:,5].copy()
+    x_centers=input_targets[:,2].clone()
+    y_centers=input_targets[:,3].clone()
+    w=input_targets[:,4].clone()
+    h=input_targets[:,5].clone()
     input_targets[:,2]=x_centers-w/2
     input_targets[:,4]=x_centers+w/2
     input_targets[:,3]=y_centers-h/2
     input_targets[:,5]=y_centers+h/2
-    
+    imgs = imgs.to(device,non_blocking=True)
+    input_targets = input_targets.to(device,non_blocking=True)
     return input_targets,width,height,imgs,targets
+
 
 def compute_center_and_depth_errors(center_pred,depth_pred,center_abs_err,depth_abs_err,targets,img_shape):
         # Statistics per image
@@ -191,12 +189,14 @@ def test(
     nc = int(data_cfg['classes'])  # number of classes
     test_path = data_cfg['valid']  # path to test images
     names = load_classes(data_cfg['names'])  # class names
+    available_cpu=len(os.sched_getaffinity(0))
+
 
     # Dataloader
-    dataset = LoadImagesAndLabels(test_path, img_size, batch_size)
+    dataset = LoadImagesAndLabels(test_path, img_size, batch_size,rect=False)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            num_workers=12,
+                            num_workers=available_cpu,
                             pin_memory=True,
                             collate_fn=dataset.collate_fn)
 
@@ -209,16 +209,13 @@ def test(
     jdict, stats, ap, ap_class = [], [], [], []
     center_abs_err=[]
     depth_abs_err=[]
-    for batch_i, (imgs, targets, paths, shapes,_,_) in enumerate(dataloader):
-        
-        with open("debug.txt","a") as f:
-            f.write("batch_i:"+str(batch_i)+'\n')
+    for batch_i, (imgs, targets, paths, shapes,_,_) in enumerate(tqdm(dataloader)):
         if len(targets)==0:
             print("skipping empty target")
             continue
         input_targets,width,height,imgs,targets=prepare_data_for_foward_pass(targets,device,imgs)
         
-        output_roi,center_pred, depth_pred = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets)  # inference and training outputs
+        output_roi,center_pred, depth_pred = model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])  # inference and training outputs
 
         center_abs_err,depth_abs_err=compute_center_and_depth_errors(center_pred,depth_pred,center_abs_err,depth_abs_err,targets,(width,height))
         stats,seen=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)

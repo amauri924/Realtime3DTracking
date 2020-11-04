@@ -275,11 +275,15 @@ def get_depth(pred):
     depth=1/pred -1
     return depth
 
-def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_matrix, giou_loss=True):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_matrix, giou_loss=True, rank=0):  # predictions, targets, model
     calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
-    lxy, lwh, lcls, lobj, lcent, ldepth,lconf_depth = ft([0]), ft([0]), ft([0]), ft([0]), ft([0]), ft([0]),ft([0])
+    lxy, lwh, lcls, lobj, lcent, ldepth,lconf_depth = ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank),ft([0]).to(rank)
     txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
+#    with open(str(rank)+'.txt',"a") as f:
+#        f.write("targets"+str(targets)+'\n')
+#        f.write("tbox"+str(tbox)+'\n')
+#        f.write("anchor_vec"+str(anchor_vec)+'\n')
 
     if type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel):
         model = model.module
@@ -288,9 +292,9 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_ma
     
     # Define criteria
     MSE = nn.MSELoss(reduction='sum')
-    BCEcls = nn.BCEWithLogitsLoss(pos_weight=ft([h['cls_pw']]), reduction='sum')
-    BCEdepth = nn.BCEWithLogitsLoss(pos_weight=ft([1]), reduction='sum')
-    BCEobj = nn.BCEWithLogitsLoss(pos_weight=ft([h['obj_pw']]), reduction='sum')
+    BCEcls = nn.BCEWithLogitsLoss(pos_weight=ft([h['cls_pw']]).to(rank), reduction='sum')
+    BCEdepth = nn.BCEWithLogitsLoss(pos_weight=ft([1]).to(rank), reduction='sum')
+    BCEobj = nn.BCEWithLogitsLoss(pos_weight=ft([h['obj_pw']]).to(rank), reduction='sum')
     L1loss=torch.nn.L1Loss()
     # CE = nn.CrossEntropyLoss()  # (weight=model.class_weights)
     
@@ -326,6 +330,7 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_ma
             tclsm = torch.zeros_like(pi[..., 5:])
             tclsm[range(nb), tcls[i]] = 1.0
             lcls += BCEcls(pi[..., 5:], tclsm)  # cls loss (BCE)
+
             # lcls += CE(pi[..., 5:], tcls[i])  # cls loss (CE)
 
             # Append targets to text file
@@ -349,53 +354,54 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_ma
     rois[:,3]*=img_shape[1]
     
     #batch numbers
-    batch_num=targets[:,0].cpu().numpy()
+#    batch_num=targets[:,0].cpu().numpy()
     
     target_cent=targets[:,6:8].clone()
     target_cent[:,0]*=img_shape[0]
     target_cent[:,1]*=img_shape[1]
 
     #Preparing the target location in the sensor coordinates
-    target_sensor_coord=target_cent.clone()
-    target_sensor_coord=torch.cat((torch.transpose(target_sensor_coord,0,1),torch.zeros((2,target_sensor_coord.shape[0])).to(target_sensor_coord.device)+1),dim=0)
-    for j in range(target_sensor_coord.shape[1]):
-        target_sensor_coord[:,j:j+1]=torch.matmul(torch.inverse(resize_matrix[int(batch_num[j]),:,:].to(target_sensor_coord.device)),target_sensor_coord[:,j:j+1])/1000 #to avoid FP16 overflow
-        target_sensor_coord[:3,j]*=gt_depth[j].T.clone()*200
+#    target_sensor_coord=target_cent.clone()
+#    target_sensor_coord=torch.cat((torch.transpose(target_sensor_coord,0,1),torch.zeros((2,target_sensor_coord.shape[0])).to(target_sensor_coord.device)+1),dim=0)
+#    for j in range(target_sensor_coord.shape[1]):
+#        target_sensor_coord[:,j:j+1]=torch.matmul(torch.inverse(resize_matrix[int(batch_num[j]),:,:].to(target_sensor_coord.device)),target_sensor_coord[:,j:j+1])/1000 #to avoid FP16 overflow
+#        target_sensor_coord[:3,j]*=gt_depth[j].T.clone()*200
     
     #Preparing the target center
     target_cent=target_cent-rois[:,:2]
     target_cent[:,0]/=rois[:,2]
     target_cent[:,1]/=rois[:,3]
+    lcent += L1loss(pcent,target_cent)
 
     #Preparing the prediction location in the sensor coordinates
-    pred_sensor_coord=pcent
-    pred_sensor_coord[:,0]*=rois[:,2]
-    pred_sensor_coord[:,1]*=rois[:,3]
-    pred_sensor_coord+=rois[:,:2]
-    pred_sensor_coord=torch.cat((torch.transpose(pred_sensor_coord,0,1),torch.zeros((2,pred_sensor_coord.shape[0])).to(pred_sensor_coord.device)+1),dim=0)
-    for j in range(target_sensor_coord.shape[1]):
-        pred_sensor_coord[:,j:j+1]=torch.matmul(torch.inverse(resize_matrix[int(batch_num[j]),:,:].to(pred_sensor_coord.device)),pred_sensor_coord[:,j:j+1])/1000 #to avoid FP16 overflow
-        pred_sensor_coord[:3,j]*=p_depth[j].T*200
+#    pred_sensor_coord=pcent
+#    pred_sensor_coord[:,0]*=rois[:,2]
+#    pred_sensor_coord[:,1]*=rois[:,3]
+#    pred_sensor_coord+=rois[:,:2]
+#    pred_sensor_coord=torch.cat((torch.transpose(pred_sensor_coord,0,1),torch.zeros((2,pred_sensor_coord.shape[0])).to(pred_sensor_coord.device)+1),dim=0)
+#    for j in range(target_sensor_coord.shape[1]):
+#        pred_sensor_coord[:,j:j+1]=torch.matmul(torch.inverse(resize_matrix[int(batch_num[j]),:,:].to(pred_sensor_coord.device)),pred_sensor_coord[:,j:j+1])/1000 #to avoid FP16 overflow
+#        pred_sensor_coord[:3,j]*=p_depth[j].T*200
 
-    # Prepare the pred and taget location in the camera coordinates (in m)
-    target_loc=ft([])
-    pred_loc=ft([])
-    for j in range(target_sensor_coord.shape[1]):
-        target_loc=torch.cat((target_loc,torch.matmul(calib[int(batch_num[j])],target_sensor_coord[:,j:j+1]).float()),dim=1)
-        pred_loc=torch.cat((pred_loc,torch.matmul(calib[int(batch_num[j])],pred_sensor_coord[:,j:j+1])),dim=1)
-    target_loc=target_loc[:-1,:]/target_loc[-1,:]
-    pred_loc=pred_loc[:-1,:]/pred_loc[-1,:]
+    # Prepare the pred and target location in the camera coordinates (in m)
+#    target_loc=ft([])
+#    pred_loc=ft([])
+#    for j in range(target_sensor_coord.shape[1]):
+#        target_loc=torch.cat((target_loc,torch.matmul(calib[int(batch_num[j])],target_sensor_coord[:,j:j+1]).float()),dim=1)
+#        pred_loc=torch.cat((pred_loc,torch.matmul(calib[int(batch_num[j])],pred_sensor_coord[:,j:j+1])),dim=1)
+#    target_loc=target_loc[:-1,:]/target_loc[-1,:]
+#    pred_loc=pred_loc[:-1,:]/pred_loc[-1,:]
     
     
     lxy *= (k * h['giou']) / nt
     lwh *= (k * h['wh']) / nt
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
-    lcent += ((bs))*10*L1loss(pcent,target_cent)
+    
 
     ldepth += L1loss(p_depth,gt_depth)
-    ldepth += L1loss(pred_loc,target_loc)
-    ldepth/=10
+#    ldepth += L1loss(pred_loc,target_loc)
+#    ldepth/=10
     if not torch.isfinite(ldepth):
         print("err")
     loss = lxy + lwh + lobj + lcls + lcent + ldepth 

@@ -4,25 +4,108 @@ import torch.nn.functional as F
 import time
 from utils.parse_config import *
 from utils.utils import *
-from torchvision.ops import roi_align
+import torchvision
 from torch.autograd import Variable
 
 
 ONNX_EXPORT = False
 
 
-def create_modules():
-    """
-    Constructs module list of layer blocks from module configuration in module_defs
-    """
-    modules = nn.Sequential()
-    modules.add_module('Yolov3',Yolov3())
-    modules.add_module('roi_align',RoiAlign())
-    module_list.append(modules)
-    return modules
+class Darknet53(nn.Module):
+    def __init__(self, cfg, img_size=(416, 416), ):
+        super(Darknet53,self).__init__()
+        self.module_defs = parse_model_cfg(cfg)
+        self.module_defs[0]['cfg'] = cfg
+        self.module_defs[0]['height'] = img_size
+        self.hyperparams, self.module_list = self.init_module(self.module_defs)
+
+        # Darknet Header https://github.com/AlexeyAB/darknet/issues/2914#issuecomment-496675346
+        self.version = np.array([0, 2, 5], dtype=np.int32)  # (int32) version info: major, minor, revision
+        self.seen = np.array([0], dtype=np.int64)  # (int64) number of images seen during training
+    
+    
+    def forward(self, x, var=None):
+        layer_outputs = []
+        output = []
+        detection_time=time.time()
+        for i, (module_def, module) in enumerate(zip(self.module_defs[:75], self.module_list[:75])):
+            mtype = module_def['type']
+            if mtype in ['convolutional', 'upsample', 'maxpool']:
+                x = module(x)
+            elif mtype == 'route':
+                layer_i = [int(x) for x in module_def['layers'].split(',')]
+                if len(layer_i) == 1:
+                    x = layer_outputs[layer_i[0]]
+                else:
+                    x = torch.cat([layer_outputs[i] for i in layer_i], 1)
+            elif mtype == 'shortcut':
+                layer_i = int(module_def['from'])
+                x = layer_outputs[-1] + layer_outputs[layer_i]
+            layer_outputs.append(x)
+            if i==74:
+                features=x
+        del x,layer_outputs
+        return features
+    
+    def init_module(self,module_defs):
+        """
+        Constructs module list of layer blocks from module configuration in module_defs
+        """
+        hyperparams = module_defs.pop(0)
+        output_filters = [int(hyperparams['channels'])]
+        module_list = nn.ModuleList()
+        yolo_index = -1
+    
+        for i, module_def in enumerate(module_defs[:75]):
+            modules = nn.Sequential()
+            if module_def['type'] == 'convolutional':
+                bn = int(module_def['batch_normalize'])
+                filters = int(module_def['filters'])
+                kernel_size = int(module_def['size'])
+                pad = (kernel_size - 1) // 2 if int(module_def['pad']) else 0
+                modules.add_module('conv_%d' % i, nn.Conv2d(in_channels=output_filters[-1],
+                                                            out_channels=filters,
+                                                            kernel_size=kernel_size,
+                                                            stride=int(module_def['stride']),
+                                                            padding=pad,
+                                                            bias=not bn))
+                if bn:
+                    modules.add_module('batch_norm_%d' % i, nn.BatchNorm2d(filters))
+                if module_def['activation'] == 'leaky':
+                    modules.add_module('leaky_%d' % i, nn.LeakyReLU(0.1, inplace=True))
+    
+            elif module_def['type'] == 'maxpool':
+                kernel_size = int(module_def['size'])
+                stride = int(module_def['stride'])
+                if kernel_size == 2 and stride == 1:
+                    modules.add_module('_debug_padding_%d' % i, nn.ZeroPad2d((0, 1, 0, 1)))
+                maxpool = nn.MaxPool2d(kernel_size=kernel_size, stride=stride, padding=int((kernel_size - 1) // 2))
+                modules.add_module('maxpool_%d' % i, maxpool)
+    
+            elif module_def['type'] == 'upsample':
+                upsample = nn.Upsample(scale_factor=int(module_def['stride']), mode='nearest')
+                modules.add_module('upsample_%d' % i, upsample)
+    
+            elif module_def['type'] == 'route':
+                layers = [int(x) for x in module_def['layers'].split(',')]
+                filters = sum([output_filters[i + 1 if i > 0 else i] for i in layers])
+                modules.add_module('route_%d' % i, EmptyLayer())
+    
+            elif module_def['type'] == 'shortcut':
+                filters = output_filters[int(module_def['from'])]
+                modules.add_module('shortcut_%d' % i, EmptyLayer())
+    
+            # Register module list and number of output filters
+            module_list.append(modules)
+            output_filters.append(filters)
+            
+        return hyperparams, module_list
+
+
+
 
 class Yolov3(nn.Module):
-    def __init__(self, cfg, img_size=(416, 416)):
+    def __init__(self, cfg, img_size=(416, 416), ):
         super(Yolov3,self).__init__()
         self.module_defs = parse_model_cfg(cfg)
         self.module_defs[0]['cfg'] = cfg
@@ -57,7 +140,7 @@ class Yolov3(nn.Module):
                 x = module[0](x, img_size)
                 output.append(x)
             layer_outputs.append(x)
-            if i==74:
+            if i==73:
                 features=x
             
         time_detection=time.time()-detection_time
@@ -80,7 +163,7 @@ class Yolov3(nn.Module):
     
         for i, module_def in enumerate(module_defs):
             modules = nn.Sequential()
-    
+            
             if module_def['type'] == 'convolutional':
                 bn = int(module_def['batch_normalize'])
                 filters = int(module_def['filters'])
@@ -211,12 +294,9 @@ class Top_layer(nn.Module):
         return modules
 
 class Depth_Layer(nn.Module):
-    def __init__(self,nc,num_bin):
+    def __init__(self,nc,num_channel):
         super(Depth_Layer, self).__init__()
         self.nc=nc
-        num_channel=1024
-        self.num_bin=num_bin
-        self.module_list=self.init_mod()
 #        self.dep = nn.Sequential(
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
@@ -232,14 +312,9 @@ class Depth_Layer(nn.Module):
         self.conv4=nn.Conv2d(num_channel, 1, kernel_size=1,
                   stride=1, padding=0, bias=True)
         self.sig=nn.Sigmoid()
-#        self.linear1=nn.Linear(in_features=2048, out_features=1024, bias=True)
-#        self.linear2=nn.Linear(in_features=2048, out_features=2*self.nc*self.num_bin, bias=True)
-#        self.conv=nn.Conv2d(2048,2*self.nc*self.num_bin, kernel_size=(1, 1), stride=(1, 1), bias=True)
-#        self.avgpool=nn.AdaptiveMaxPool2d((4,4))
+
 
     def forward(self,x):
-
-
         x=self.conv1(x)
         x=self.bn1(x)
         x=self.relu(x)
@@ -250,23 +325,8 @@ class Depth_Layer(nn.Module):
             x=self.bn3(x)
         x=self.conv4(x)
         x=self.sig(x).view(-1,1)
-#        x=x.view(-1,self.nc,self.num_bin,2)
-        
-#        x=self.module_list(x)
-#        x=self.avgpool(x).view(-1,2048)
-#        x=self.linear1(x)
-#        x=self.conv(x).view(-1,self.nc,self.num_bin,2)
-
-#        if not self.training:
-#            x[:,:,:,1]=torch.sigmoid(x[:,:,:,1])
         return x
-        
-    def init_mod(self):
-#        modules=nn.Sequential(Bottleneck(1024,256,stride=1),Bottleneck(1024,256,stride=1),Bottleneck(1024,256,stride=1),Bottleneck(1024,256,stride=1),Bottleneck(1024,256,stride=1),Bottleneck(1024,512,stride=2,downsample=downsample(1024,2048)),
-#                Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1))
-        modules=nn.Sequential(Bottleneck(1024,512,stride=2,downsample=downsample(1024,2048)),
-                Bottleneck(2048,512,stride=1),Bottleneck(2048,512,stride=1))
-        return modules
+
     
     def init_weights(self):
         '''
@@ -306,27 +366,7 @@ class EmptyLayer(nn.Module):
     def forward(self, x):
         return x
 
-class RoiAlign(nn.Module):
-    def __init__(self):
-        super(RoiAlign, self).__init__()
-        
 
-    def forward(self,features,filtered_roi,batch_idxs=0):
-
-        if features.type()=='torch.cuda.HalfTensor':
-            box=torch.zeros([filtered_roi.shape[0], 5], dtype=torch.float16).to(features.device)
-        else:
-            box=torch.zeros([filtered_roi.shape[0], 5], dtype=torch.float32).to(features.device)
-        box[:,1:] = filtered_roi[:, :4].detach()
-#        if batch_idxs!=torch.tensor([]):
-        if self.training:
-            box[:,0]=batch_idxs
-        pooled_features=roi_align(features, box,(7,7), spatial_scale=1.0/32.0)
-        
-        del box
-        return pooled_features
-    
-    
 
 
 
@@ -373,29 +413,58 @@ class YOLOLayer(nn.Module):
 
 
 class center_pred(nn.Module):
-    def __init__(self,nc):
-        super(center_pred, self).__init__()
-        self.nc=nc #num classes
-        self.modules_list=nn.Sequential(nn.Linear(in_features=2048, out_features=2*self.nc, bias=True))
-
     
-    def forward(self,x):
-        x=self.modules_list(x)
-        return x
+    def __init__(self,nc,num_channel):
+        super(center_pred, self).__init__()
+        self.nc=nc
+#        self.dep = nn.Sequential(
+        self.conv1=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn1=nn.BatchNorm2d(num_channel)
+        self.relu=nn.ReLU(inplace=True)
+        self.conv2=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn2=nn.BatchNorm2d(num_channel)
 
-class Darknet(nn.Module):
+        self.conv3=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn3=nn.BatchNorm2d(num_channel)
+        self.conv4=nn.Conv2d(num_channel, 2*self.nc, kernel_size=1,
+                  stride=1, padding=0, bias=True)
+
+
+
+    def forward(self,x):
+        x=self.conv1(x)
+        x=self.bn1(x)
+        x=self.relu(x)
+        x=self.conv2(x)
+        x=self.bn2(x)
+        x=self.conv3(x)
+        if x.shape[0]>1:
+            x=self.bn3(x)
+        x=self.conv4(x)
+        return x.view(-1,2*self.nc)
+
+
+class Model(nn.Module):
     """YOLOv3 object detection model"""
 
-    def __init__(self, cfg,hyp,transfer=False, img_size=(416, 416)):
-        super(Darknet, self).__init__()
-        self.num_bin=1
-        self.Yolov3=Yolov3(cfg,img_size)
-        self.nc=int(self.Yolov3.module_defs[-1]['classes']) #Get num classes
-        self.featurePooling=RoiAlign()
+    def __init__(self, cfg,hyp,transfer=False, img_size=(416, 416),encoder="Darknet"):
+        super(Model, self).__init__()
+        self.num_channel=1024
+#        if encoder=="Darknet":
+#            self.encoder=Darknet53(cfg,img_size)
+#            _ = load_darknet_weights(self, "weights/" + 'darknet53.conv.74')
+#        elif encoder=="Resnet-18":
+#            self.encoder=Darknet53(cfg,img_size)
         
-        self.top_layer=Top_layer()
-        self.depth_pred=Depth_Layer(self.nc,self.num_bin)
-        self.center_prediction=center_pred(self.nc)
+        
+        self.Yolov3=Yolov3(cfg,img_size)
+#        _ = load_darknet_weights(self, "weights/" + 'darknet53.conv.74')
+        self.nc=int(self.Yolov3.module_defs[-1]['classes']) #Get num classes
+        self.depth_pred=Depth_Layer(self.nc,self.num_channel)
+        self.center_prediction=center_pred(self.nc,self.num_channel)
         self.transfer=transfer
         self.hyp=hyp
         
@@ -408,75 +477,37 @@ class Darknet(nn.Module):
         else:
             self.transfer=True
         if not self.training and not self.transfer:
-            t_yol=time.time()
             _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
-            t_yol=time.time()-t_yol
-            t_proc_NMS=time.time()
             io=[]
             for line in io_orig:
                 line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
                 io.append(line)
             rois=torch.cat(io,1)
-
-#            newt_NMS=time.time()
-#            rois = new_non_max_suppression(rois, conf_thres=conf_thres, iou_thres=nms_thres,multi_label=False)
-#            newt_NMS=time.time()-newt_NMS
-            
-            t_NMS=time.time()
             rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
-            t_NMS=time.time()-t_NMS
-            
-            
             for i,roi in enumerate(rois):
                 if roi is None:
                     rois[i]=torch.tensor([]).to(x.device).view(0,7)
                     continue
             
             device_id=int(str(x.device)[-1])
-            targets=torch.from_numpy(targets)
-            targets=targets.to(features.device)
-            new_idxs=targets[:,0]-device_id*x.shape[0]
-            mask_1=new_idxs<x.shape[0]
-            mask_2=new_idxs>-1
-            mask_3=mask_1&mask_2
-            targets=targets[mask_3]
             roi=targets[:,2:6]
             if len(roi)==0:
                 return rois,torch.tensor([]),torch.tensor([])
-            t_proc_NMS=time.time()-t_proc_NMS
-            t_end=time.time()
-            pooled_features=self.featurePooling(features, roi)
+            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0)
             depth_pred=self.depth_pred(pooled_features)
-            pooled_features=self.top_layer(pooled_features) # Run the final layers 
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             del pooled_features
             del features
-            t_end=time.time()-t_end
             return rois,center_pred,depth_pred
         
         else:
             p ,features,_=  self.Yolov3(x) # inference output, training output
-            targets=torch.from_numpy(targets)
-            targets=targets.to(features.device)
-            device_id=int(str(x.device)[-1])
             
             #Compute 3D center or object depth using GT bbox
             #For multi-gpu
-            
-            new_idxs=targets[:,0]-device_id*x.shape[0]
-            mask_1=new_idxs<x.shape[0]
-            mask_2=new_idxs>-1
-            mask_3=mask_1&mask_2
-            targets=targets[mask_3]
-            
-            roi=targets[:,2:6]
-            
-            b=new_idxs[mask_3]
-            pooled_features=self.featurePooling(features, roi,b)
+            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0)
             depth_pred=self.depth_pred(pooled_features)
-            del b,roi
-            top_layer=self.top_layer(pooled_features) # Run the final layers 
-            center_pred=self.center_prediction(top_layer)/100 # Run the 3D prediction
+            center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             
             
             return p,center_pred,depth_pred
