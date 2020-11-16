@@ -65,7 +65,7 @@ def setup_net_transfert(model):
     return model
 
 def compute_rel_err(pred,target):
-    depth_target=target[:,8:9].clone().detach()*200
+    depth_target=target[:,8:].clone().detach()*200
     pred_depth=pred.clone().detach()*200
     
     rel_err=abs(depth_target-pred_depth)/depth_target
@@ -153,12 +153,12 @@ def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,res
 #                                      conf_thres=0.1)
     # Write epoch results
     with open(result_path, 'a') as file:
-        file.write(s +'|||'+ '%11.3g' * 7 % results + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err, dim_abs_err
+        file.write(s +'|||'+ '%11.3g' * 6 % results + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err
     
 
     
     # Update best map
-    fitness = results[5]+(1-results[2])+results[6]
+    fitness = results[-1]+(1-results[2])
     if fitness < best_fitness and fitness!=0:
         print("best error replaced by %f"%fitness)
         best_fitness = fitness
@@ -233,8 +233,11 @@ def train(
 
     # Optimizer
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
-                           lr=1e-4,  weight_decay=1e-5)
+                           lr=1e-4,  weight_decay=3e-6)
     scaler = torch.cuda.amp.GradScaler()
+    
+    
+    
     
     cutoff = -1  # backbone reaches to cutoff layer
     start_epoch = 0
@@ -307,20 +310,20 @@ def train(
                             sampler=train_sampler)
 
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=len(dataloader)/accumulate)
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 1e-3, epochs=epochs, steps_per_epoch=len(dataloader)/accumulate)
     scheduler.last_epoch = start_epoch - 1
 
+    # Mixed precision training https://github.com/NVIDIA/apex
+    mixed_precision = True
 
 
-    # Initialize distributed training
-#    if torch.cuda.device_count() > 1:
-#        with open(log_path, 'w') as logfile:
-#            logfile.write("nb GPU : %i\n"%torch.cuda.device_count())
+#    # Initialize distributed training
 #    dist.init_process_group(backend='gloo',  # 'distributed backend'
 #                            world_size=world_size,  # number of nodes for distributed training
 #                            rank=rank)  # distributed training node rank
-
+#
 #    model = torch.nn.parallel.DistributedDataParallel(model,device_ids=[rank],find_unused_parameters = True)
+
 
 
 
@@ -339,9 +342,8 @@ def train(
         loss_scheduler=[]
         model.train()
         rel_err=[]
-        #set new learning rate
-#        for param_group in optimizer.param_groups:
-#            param_group['lr'] = lr_values[epoch]
+#        if opt.transfer:
+#            model=setup_net_transfert(model)
 
         with open(log_path, 'a') as logfile:
             logfile.write(str(rank)+" "+"Epoch: %i\n"%epoch)
@@ -352,14 +354,15 @@ def train(
         for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized) in enumerate(tqdm(dataloader)):
             if opt.depth_aug:
                 targets=rois_augmentation_for_depth(targets,0.2,0.02)
+
             #Prepare data
             imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,
                                         multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
             
             # Run model
             with torch.cuda.amp.autocast():
-                pred,pred_center,depth_pred,dim_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-                loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred, targets, model,imgs.shape[2:],calib,resize_matrix, giou_loss=not opt.xywh,rank=device)
+                pred,pred_center,depth_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
+                loss, loss_items = compute_loss(pred,pred_center,depth_pred, targets, model,imgs.shape[2:],calib,resize_matrix, giou_loss=not opt.xywh,rank=device)
             
             #Depth relative error
             rel_err_=compute_rel_err(depth_pred.float(),targets.float())
@@ -373,20 +376,20 @@ def train(
                 return pred
 
             # Compute gradient
+            if mixed_precision:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
 
-            scaler.scale(loss).backward()
-
-
-
-            
-            mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path,rank)
-            
             # Accumulate gradient for x batches before optimizing
             if (i + 1) % accumulate == 0 or (i + 1) == nb:
                 scaler.step(optimizer)
                 scaler.update() 
                 optimizer.zero_grad()
                 scheduler.step()
+            
+            mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path,rank)
+            
 
         if rank == 0:
             rel_err=torch.mean(torch.tensor(rel_err))
@@ -397,7 +400,6 @@ def train(
                 f.write("Epoch loss:"+str(loss_scheduler)+'\n')
             new_lr=scheduler.get_last_lr()
             with open("lr.txt","a") as f:
-#                f.write("LR:"+str(optimizer.param_groups[0]['lr'])+'\n')
                 f.write("LR:"+str(new_lr)+'\n')
                 
             # Report time
@@ -439,19 +441,19 @@ def example(rank, world_size,opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=30, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=8,
+    parser.add_argument('--epochs', type=int, default=100, help='number of epochs')
+    parser.add_argument('--batch-size', type=int, default=64,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=4, help='number of batches to accumulate before optimizing')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-GTA.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent_v3.data', help='coco.data file path')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--depth_aug', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=True, help='transfer learning flag')
-    parser.add_argument('--num-workers', type=int, default=7, help='number of Pytorch DataLoader workers')
+    parser.add_argument('--num-workers', type=int, default=8, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')
