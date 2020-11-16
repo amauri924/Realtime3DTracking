@@ -275,10 +275,10 @@ def get_depth(pred):
     depth=1/pred -1
     return depth
 
-def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_matrix, giou_loss=True, rank=0):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth,dim_pred, targets, model,img_shape,calib,resize_matrix, giou_loss=True, rank=0):  # predictions, targets, model
     calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
-    lxy, lwh, lcls, lobj, lcent, ldepth,lconf_depth = ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank),ft([0]).to(rank)
+    lxy, lwh, lcls, lobj, lcent, ldepth,ldim = ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank),ft([0]).to(rank)
     txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
 #    with open(str(rank)+'.txt',"a") as f:
 #        f.write("targets"+str(targets)+'\n')
@@ -341,10 +341,10 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_ma
     pcent= p_center #Associated 3D centers
     pcent=torch.cat([pcent.view(pcent.shape[0],-1,2)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,2) #Select center prediction corresponding to the target class
     gt_depth=targets[:,8].clone().view(-1,1)
-
-
     p_depth=pred_depth
 
+    pdim=torch.cat([dim_pred.view(dim_pred.shape[0],-1,6)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,6) #Select center prediction corresponding to the target class
+    tdim=targets[:,9:15].clone()
 
 #    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
     rois=targets[:,2:6].clone() # Rois closest to anchors 
@@ -371,7 +371,7 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_ma
     target_cent=target_cent-rois[:,:2]
     target_cent[:,0]/=rois[:,2]
     target_cent[:,1]/=rois[:,3]
-    lcent += L1loss(pcent,target_cent)
+    
 
     #Preparing the prediction location in the sensor coordinates
 #    pred_sensor_coord=pcent
@@ -398,16 +398,17 @@ def compute_loss(p,p_center,pred_depth, targets, model,img_shape,calib,resize_ma
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
     
-
+    lcent += L1loss(pcent,target_cent)
+    ldim += L1loss(pdim,tdim)
     ldepth += L1loss(p_depth,gt_depth)
 #    ldepth += L1loss(pred_loc,target_loc)
 #    ldepth/=10
     if not torch.isfinite(ldepth):
         print("err")
-    loss = lxy + lwh + lobj + lcls + lcent + ldepth 
+    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim
 #    loss=lconf_depth+ldepth
 
-    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldepth, loss)).detach()
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim, loss)).detach()
 
 
 
