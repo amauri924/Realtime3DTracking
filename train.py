@@ -310,7 +310,7 @@ def train(
                             sampler=train_sampler)
 
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 1e-3, epochs=epochs, steps_per_epoch=len(dataloader)/accumulate)
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 1e-3, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate))
     scheduler.last_epoch = start_epoch - 1
 
     # Mixed precision training https://github.com/NVIDIA/apex
@@ -442,9 +442,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
     parser.add_argument('--epochs', type=int, default=100, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=64,
+    parser.add_argument('--batch-size', type=int, default=8,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=4, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=32, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
