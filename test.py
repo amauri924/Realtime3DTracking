@@ -27,7 +27,7 @@ def prepare_data_for_foward_pass(targets,device,imgs):
     return input_targets,width,height,imgs,targets
 
 
-def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,center_abs_err,depth_abs_err,dim_abs_err,targets,img_shape):
+def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,targets,img_shape):
         # Statistics per image
         labels=targets[:,1:]
         tcls=labels[:,0]
@@ -42,8 +42,8 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,center_abs_e
         tcent[:, 0] *= width
         tcent[:, 1] *= height
         
-        tdim=labels[:, 8:14]
-
+        tdim=labels[:, 8:11]
+        talpha=labels[:, 12:13]
         for idx_pred in range(len(center_pred)):
             target_center=tcent[idx_pred]
             predicted_center=center_pred[idx_pred]
@@ -51,12 +51,15 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,center_abs_e
             gt_depth=tdepth[idx_pred]
             predicted_depth=depth_pred[idx_pred]
             
+            gt_orient=talpha[idx_pred]
+            pred_orient=orient_pred[idx_pred]
+            
             gt_dim=tdim[idx_pred]
             predicted_dim=pred_dim[idx_pred]
             
             obj_cls=int(tcls[idx_pred])
-            predicted_center=predicted_center[obj_cls:obj_cls+2]
-            predicted_dim=predicted_dim[obj_cls:obj_cls+6]
+            predicted_center=predicted_center
+            predicted_dim=predicted_dim
 
             
             w_bbox=tbox[idx_pred][2].cpu().item()-tbox[idx_pred][0].cpu().item()
@@ -74,9 +77,12 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,center_abs_e
                 
             center_abs_err.append(torch.mean(torch.tensor([abs(abs(predicted_center[0]-target_center[0])/target_center[0]),abs(abs(predicted_center[1]-target_center[1])/target_center[1])])))
             depth_abs_err.append(abs(abs(predicted_depth-gt_depth)/(gt_depth+0.00001)))
-        return center_abs_err,depth_abs_err,dim_abs_err
+            
+            orient_abs_err.append(abs(abs(pred_orient-gt_orient)/(gt_orient+0.00000000001)))
+            
+        return center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err
 
-def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,nc,names,seen):
+def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,nc,names,seen):
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in list(zip(*stats))]  # to numpy
     nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
@@ -104,6 +110,8 @@ def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err
         center_abs_err=torch.mean(torch.tensor(center_abs_err)[torch.isfinite(torch.tensor(center_abs_err))]).cpu().item()
         depth_abs_err=torch.mean(torch.tensor(depth_abs_err)[torch.isfinite(torch.tensor(depth_abs_err))]).cpu().item()
         dim_abs_err=torch.mean(torch.tensor(dim_abs_err)[torch.isfinite(torch.tensor(dim_abs_err))]).cpu().item()
+        
+        orient_abs_err=torch.mean(torch.tensor(orient_abs_err)[torch.isfinite(torch.tensor(orient_abs_err))]).cpu().item()
         if math.isnan(depth_abs_err):
             print("nan")
 
@@ -112,7 +120,7 @@ def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err
         depth_abs_err=0
         dim_abs_err=0
     
-    return (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err), maps
+    return (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps
 
 def compute_bbox_error(output,targets,stats,width,height,iou_thres,seen):
     for si, pred in enumerate(output):
@@ -220,18 +228,19 @@ def test(
     center_abs_err=[]
     depth_abs_err=[]
     dim_abs_err=[]
+    orient_abs_err=[]
     for batch_i, (imgs, targets, paths, shapes,_,_) in enumerate(tqdm(dataloader)):
         if len(targets)==0:
             print("skipping empty target")
             continue
         input_targets,width,height,imgs,targets=prepare_data_for_foward_pass(targets,device,imgs)
         
-        output_roi,center_pred, depth_pred ,pred_dim= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])  # inference and training outputs
+        output_roi,center_pred, depth_pred ,pred_dim,orient_pred= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])  # inference and training outputs
 
-        center_abs_err,depth_abs_err,dim_abs_err=compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,center_abs_err,depth_abs_err,dim_abs_err,targets,(width,height))
+        center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err=compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,targets,(width,height))
         stats,seen=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)
-    (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,nc,names,seen)
-    return (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err), maps
+    (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,nc,names,seen)
+    return (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps
 
 
 

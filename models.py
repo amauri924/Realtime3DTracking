@@ -429,7 +429,7 @@ class center_pred(nn.Module):
         self.conv3=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, 2*self.nc, kernel_size=1,
+        self.conv4=nn.Conv2d(num_channel, 2, kernel_size=1,
                   stride=1, padding=0, bias=True)
 
 
@@ -444,7 +444,7 @@ class center_pred(nn.Module):
         if x.shape[0]>1:
             x=self.bn3(x)
         x=self.conv4(x)
-        return x.view(-1,2*self.nc)
+        return x.view(-1,2)
 
 
 class dim_pred(nn.Module):
@@ -464,8 +464,9 @@ class dim_pred(nn.Module):
         self.conv3=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, 6*self.nc, kernel_size=1,
+        self.conv4=nn.Conv2d(num_channel, 3, kernel_size=1,
                   stride=1, padding=0, bias=True)
+        self.sig=nn.Sigmoid()
 
 
 
@@ -479,7 +480,44 @@ class dim_pred(nn.Module):
         if x.shape[0]>1:
             x=self.bn3(x)
         x=self.conv4(x)
-        return x.view(-1,6*self.nc)
+        x=self.sig(x).view(-1,1)
+        return x.view(-1,3)
+
+class orient_pred(nn.Module):
+    
+    def __init__(self,nc,num_channel):
+        super(orient_pred, self).__init__()
+        self.nc=nc
+#        self.dep = nn.Sequential(
+        self.conv1=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn1=nn.BatchNorm2d(num_channel)
+        self.relu=nn.ReLU(inplace=True)
+        self.conv2=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn2=nn.BatchNorm2d(num_channel)
+
+        self.conv3=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn3=nn.BatchNorm2d(num_channel)
+        self.conv4=nn.Conv2d(num_channel, 1, kernel_size=1,
+                  stride=1, padding=0, bias=True)
+        self.sig=nn.Sigmoid()
+
+
+
+    def forward(self,x):
+        x=self.conv1(x)
+        x=self.bn1(x)
+        x=self.relu(x)
+        x=self.conv2(x)
+        x=self.bn2(x)
+        x=self.conv3(x)
+        if x.shape[0]>1:
+            x=self.bn3(x)
+        x=self.conv4(x)
+        x=self.sig(x)
+        return x.view(-1,1)
 
 
 
@@ -496,6 +534,7 @@ class Model(nn.Module):
         self.depth_pred=Depth_Layer(self.nc,self.num_channel)
         self.center_prediction=center_pred(self.nc,self.num_channel)
         self.dimension_prediction=dim_pred(self.nc,self.num_channel)
+        self.orientation_prediction=orient_pred(self.nc,self.num_channel)
         self.transfer=transfer
         self.hyp=hyp
         
@@ -527,10 +566,11 @@ class Model(nn.Module):
             pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
-            dimension_pred=self.dimension_prediction(pooled_features)
+            dimension_pred=self.dimension_prediction(pooled_features)/100
+            orientation_pred=self.orientation_prediction(pooled_features)
             del pooled_features
             del features
-            return rois,center_pred,depth_pred,dimension_pred
+            return rois,center_pred,depth_pred,dimension_pred,orientation_pred
         
         else:
             p ,features,_=  self.Yolov3(x) # inference output, training output
@@ -540,9 +580,10 @@ class Model(nn.Module):
             pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
-            dimension_pred=self.dimension_prediction(pooled_features)
+            dimension_pred=self.dimension_prediction(pooled_features)/100
+            orientation_pred=self.orientation_prediction(pooled_features)
             
-            return p,center_pred,depth_pred,dimension_pred
+            return p,center_pred,depth_pred,dimension_pred,orientation_pred
         
         
     def _init_weights(self):

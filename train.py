@@ -85,7 +85,7 @@ def print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer
     mloss = (mloss * i + loss_items.cpu().detach()) / (i + 1)  # update mean losses
     loss_scheduler.append(mloss[-1])
     for x in optimizer.param_groups:
-        s = ('%8s%12s' + '%10.3g' * 11) % (
+        s = ('%8s%12s' + '%10.3g' * 12) % (
             '%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), img_size, x['lr'])
     with open(log_path, 'a') as logfile:
         logfile.write(str(rank)+" "+s+"\n")
@@ -153,12 +153,12 @@ def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,res
 #                                      conf_thres=0.1)
     # Write epoch results
     with open(result_path, 'a') as file:
-        file.write(s +'|||'+ '%11.3g' * 7 % results + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err, dim_abs_err
+        file.write(s +'|||'+ '%11.3g' * 8 % results + '\n')  # P, R, mAP, F1, center_abs_err, depth_abs_err, dim_abs_err, orient_abs_err
     
 
     
     # Update best map
-    fitness = results[5]+(1-results[2])+results[6]
+    fitness = results[5]+(1-results[2])+results[6]+results[7]
     if fitness < best_fitness and fitness!=0:
         print("best error replaced by %f"%fitness)
         best_fitness = fitness
@@ -233,7 +233,7 @@ def train(
 
     # Optimizer
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
-                           lr=1e-4,  weight_decay=1e-5)
+                           lr=1e-4,  weight_decay=3e-6)
     scaler = torch.cuda.amp.GradScaler()
     
     cutoff = -1  # backbone reaches to cutoff layer
@@ -307,7 +307,7 @@ def train(
                             sampler=train_sampler)
 
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=len(dataloader)/accumulate)
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 3e-3, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate))
     scheduler.last_epoch = start_epoch - 1
 
 
@@ -336,6 +336,11 @@ def train(
         
     
     for epoch in range(start_epoch, epochs):
+        if epoch < 100:
+            opt.notest = True
+        else:
+            opt.notest = False
+        
         loss_scheduler=[]
         model.train()
         rel_err=[]
@@ -347,7 +352,7 @@ def train(
             logfile.write(str(rank)+" "+"Epoch: %i\n"%epoch)
 
 
-        mloss = torch.zeros(8)  # mean losses
+        mloss = torch.zeros(9)  # mean losses
 
         for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized) in enumerate(tqdm(dataloader)):
             if opt.depth_aug:
@@ -358,9 +363,12 @@ def train(
             
             # Run model
             with torch.cuda.amp.autocast():
-                pred,pred_center,depth_pred,dim_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-                loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred, targets, model,imgs.shape[2:],calib,resize_matrix, giou_loss=not opt.xywh,rank=device)
-            
+                pred,pred_center,depth_pred,dim_pred,orient_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
+                loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred, targets, model,imgs.shape[2:],calib,resize_matrix, giou_loss=not opt.xywh,rank=device)
+           
+            # Compute gradient
+            scaler.scale(loss).backward()
+          
             #Depth relative error
             rel_err_=compute_rel_err(depth_pred.float(),targets.float())
             for value in rel_err_:
@@ -371,13 +379,6 @@ def train(
                 with open(log_path, 'a') as logfile:
                     logfile.write('WARNING: nan loss detected, ending training \n')
                 return pred
-
-            # Compute gradient
-
-            scaler.scale(loss).backward()
-
-
-
             
             mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path,rank)
             
@@ -439,12 +440,12 @@ def example(rank, world_size,opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=30, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=8,
+    parser.add_argument('--epochs', type=int, default=150, help='number of epochs')
+    parser.add_argument('--batch-size', type=int, default=64,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=4, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-GTA.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent_v3.data', help='coco.data file path')
+    parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')

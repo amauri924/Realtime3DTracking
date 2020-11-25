@@ -9,7 +9,7 @@ Created on Mon Sep 14 09:40:29 2020
 import os
 
 file_path="data/GTA_3dcent/test.txt"
-dir_criann="/save/2020010/amauri03/GTA_Preprocessed_v3/"
+dir_criann="/home/antoine/remote_criann/GTA_Preprocessed_v4/"
 
 with open(file_path,'r') as f:
     files=[file.split('\n')[0] for file in f.readlines()]
