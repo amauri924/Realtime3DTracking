@@ -464,9 +464,9 @@ class dim_pred(nn.Module):
         self.conv3=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, 3, kernel_size=1,
+        self.conv4=nn.Conv2d(num_channel, 3*self.nc, kernel_size=1,
                   stride=1, padding=0, bias=True)
-        self.sig=nn.Sigmoid()
+
 
 
 
@@ -480,8 +480,7 @@ class dim_pred(nn.Module):
         if x.shape[0]>1:
             x=self.bn3(x)
         x=self.conv4(x)
-        x=self.sig(x).view(-1,1)
-        return x.view(-1,3)
+        return x.view(-1,self.nc,3)
 
 class orient_pred(nn.Module):
     

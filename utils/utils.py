@@ -13,6 +13,7 @@ from pathlib import Path
 import time
 import torchvision
 from . import torch_utils  # , google_utils
+import json
 
 matplotlib.rc('font', **{'size': 11})
 
@@ -275,7 +276,7 @@ def get_depth(pred):
     depth=1/pred -1
     return depth
 
-def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_shape,calib,resize_matrix, giou_loss=True, rank=0):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0):  # predictions, targets, model
     calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
     lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation = ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank),ft([0]).to(rank)
@@ -342,10 +343,24 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
 #    pcent=torch.cat([pcent.view(pcent.shape[0],-1,2)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,2) #Select center prediction corresponding to the target class
     gt_depth=targets[:,8].clone().view(-1,1)
     p_depth=pred_depth
-
-#    pdim=torch.cat([dim_pred.view(dim_pred.shape[0],-1,6)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,6) #Select center prediction corresponding to the target class
-    pdim=dim_pred.view(-1,3)
+    
+#    
+#    pdim=dim_pred
+    
     tdim=targets[:,9:12].clone()
+    
+    
+    
+    tdim_offsets=torch.zeros_like(dim_pred)
+    for image_idx in range(len(tdim_offsets)):
+        tdim_offsets[image_idx,:,:]=default_dims_tensor/200 - tdim[image_idx,:]
+    
+#    pdim= torch.autograd.Variable(torch.ones(tdim.shape[0], tdim.shape[1],device=tdim.device), requires_grad=True)
+#    for idx,index in enumerate(targets[:,1]):
+#        pdim[idx,:]=dim_pred[idx,int(index),:]
+    
+#    pdim=torch.cat([dim_pred[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3) #Select center prediction corresponding to the target class
+    pdim=dim_pred
     
     p_alpha=orient_pred.view(-1,1)
     t_alpha=targets[:,13:14].clone()
@@ -364,12 +379,6 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     target_cent[:,0]*=img_shape[0]
     target_cent[:,1]*=img_shape[1]
 
-    #Preparing the target location in the sensor coordinates
-#    target_sensor_coord=target_cent.clone()
-#    target_sensor_coord=torch.cat((torch.transpose(target_sensor_coord,0,1),torch.zeros((2,target_sensor_coord.shape[0])).to(target_sensor_coord.device)+1),dim=0)
-#    for j in range(target_sensor_coord.shape[1]):
-#        target_sensor_coord[:,j:j+1]=torch.matmul(torch.inverse(resize_matrix[int(batch_num[j]),:,:].to(target_sensor_coord.device)),target_sensor_coord[:,j:j+1])/1000 #to avoid FP16 overflow
-#        target_sensor_coord[:3,j]*=gt_depth[j].T.clone()*200
     
     #Preparing the target center
     target_cent=target_cent-rois[:,:2]
@@ -377,24 +386,6 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     target_cent[:,1]/=rois[:,3]
     
 
-    #Preparing the prediction location in the sensor coordinates
-#    pred_sensor_coord=pcent
-#    pred_sensor_coord[:,0]*=rois[:,2]
-#    pred_sensor_coord[:,1]*=rois[:,3]
-#    pred_sensor_coord+=rois[:,:2]
-#    pred_sensor_coord=torch.cat((torch.transpose(pred_sensor_coord,0,1),torch.zeros((2,pred_sensor_coord.shape[0])).to(pred_sensor_coord.device)+1),dim=0)
-#    for j in range(target_sensor_coord.shape[1]):
-#        pred_sensor_coord[:,j:j+1]=torch.matmul(torch.inverse(resize_matrix[int(batch_num[j]),:,:].to(pred_sensor_coord.device)),pred_sensor_coord[:,j:j+1])/1000 #to avoid FP16 overflow
-#        pred_sensor_coord[:3,j]*=p_depth[j].T*200
-
-    # Prepare the pred and target location in the camera coordinates (in m)
-#    target_loc=ft([])
-#    pred_loc=ft([])
-#    for j in range(target_sensor_coord.shape[1]):
-#        target_loc=torch.cat((target_loc,torch.matmul(calib[int(batch_num[j])],target_sensor_coord[:,j:j+1]).float()),dim=1)
-#        pred_loc=torch.cat((pred_loc,torch.matmul(calib[int(batch_num[j])],pred_sensor_coord[:,j:j+1])),dim=1)
-#    target_loc=target_loc[:-1,:]/target_loc[-1,:]
-#    pred_loc=pred_loc[:-1,:]/pred_loc[-1,:]
     
     
     lxy *= (k * h['giou']) / nt
@@ -404,7 +395,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     
     l_orientation += L1loss(p_alpha,t_alpha)
     lcent += L1loss(pcent,target_cent)
-    ldim += L1loss(pdim,tdim)*100
+    ldim += L1loss(pdim,tdim_offsets)*100
     ldepth += L1loss(p_depth,gt_depth)
 #    ldepth += L1loss(pred_loc,target_loc)
 #    ldepth/=10

@@ -15,6 +15,8 @@ from utils.utils import *
 import sys
 #import torch_optimizer as optim
 import torch.multiprocessing as mp
+import json
+
 
 os.environ['MASTER_ADDR'] = 'localhost'
 os.environ['MASTER_PORT'] = '12355'
@@ -334,6 +336,12 @@ def train(
     with open(log_path, 'a') as logfile:
         logfile.write(str(rank)+" "+"nb epochs : %i\n"%epochs)
         
+    with open("avg_shapes.json","r") as f:
+        default_dims=json.load(f)
+    default_dims_tensor=torch.zeros(len(default_dims),3,device=device)
+    for class_idx in default_dims:
+        default_dims_tensor[int(class_idx),:]=torch.tensor([shape for shape in default_dims[class_idx]])
+    
     
     for epoch in range(start_epoch, epochs):
         if epoch < 100:
@@ -355,6 +363,8 @@ def train(
         mloss = torch.zeros(9)  # mean losses
 
         for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized) in enumerate(tqdm(dataloader)):
+            
+            
             if opt.depth_aug:
                 targets=rois_augmentation_for_depth(targets,0.2,0.02)
             #Prepare data
@@ -364,7 +374,7 @@ def train(
             # Run model
             with torch.cuda.amp.autocast():
                 pred,pred_center,depth_pred,dim_pred,orient_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-                loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred, targets, model,imgs.shape[2:],calib,resize_matrix, giou_loss=not opt.xywh,rank=device)
+                loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
            
             # Compute gradient
             scaler.scale(loss).backward()
