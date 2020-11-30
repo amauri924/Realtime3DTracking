@@ -6,6 +6,7 @@ from tqdm import tqdm
 from models import *
 from utils.datasets import *
 from utils.utils import *
+import math
 
 def prepare_data_for_foward_pass(targets,device,imgs):
     _, _, height, width = imgs.shape  # batch size, channels, height, width
@@ -27,8 +28,8 @@ def prepare_data_for_foward_pass(targets,device,imgs):
     return input_targets,width,height,imgs,targets
 
 
-def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,center_abs_err,depth_abs_err,dim_abs_err,
-                                    orient_abs_err,targets,img_shape,default_dims_tensor,dim_abs_err_dict):
+def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,orient_bin_cls,center_abs_err,depth_abs_err,dim_abs_err,
+                                    orient_abs_err,targets,img_shape,default_dims_tensor,dim_abs_err_dict,orient_abs_err_dict):
         # Statistics per image
         labels=targets[:,1:]
         tcls=labels[:,0]
@@ -44,7 +45,10 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
         tcent[:, 1] *= height
         
         tdim=labels[:, 8:11]*200
-        talpha=labels[:, 12:13]
+        talpha=labels[:, 12:13]*2*np.pi
+        p_orient_cls=torch.max(orient_bin_cls,1).indices
+        default_angles=[0.125,0.375,0.625,0.875]
+        
         for idx_pred in range(len(center_pred)):
             target_center=tcent[idx_pred]
             predicted_center=center_pred[idx_pred]
@@ -52,8 +56,16 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             gt_depth=tdepth[idx_pred]
             predicted_depth=depth_pred[idx_pred]
             
-            gt_orient=talpha[idx_pred]
-            pred_orient=orient_pred[idx_pred]
+            gt_orient=talpha[idx_pred].item()
+            gt_sin=math.sin(gt_orient)
+            gt_cos=math.cos(gt_orient)
+            pred_orient_cls=int(p_orient_cls[idx_pred])
+            pred_sincos=orient_pred[idx_pred,pred_orient_cls,:]
+            pred_angle=default_angles[pred_orient_cls]*2*np.pi-math.atan2(pred_sincos[0].item(),pred_sincos[1].item())
+            p_cos=math.cos(pred_angle)
+            p_sin=math.sin(pred_angle)
+
+            
             
             obj_cls=int(tcls[idx_pred])
             gt_dim=tdim[idx_pred]
@@ -86,11 +98,18 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             center_abs_err.append(torch.mean(torch.tensor([abs(abs(predicted_center[0]-target_center[0])/target_center[0]),abs(abs(predicted_center[1]-target_center[1])/target_center[1])])))
             depth_abs_err.append(abs(abs(predicted_depth-gt_depth)/(gt_depth+0.00001)))
             
-            orient_abs_err.append(abs(abs(pred_orient-gt_orient)/(gt_orient+0.00000000001)))
+            mean_abs=np.mean(np.array([abs(abs(p_sin-gt_sin)/(gt_sin+0.00000000001)),abs(abs(p_cos-gt_cos)/(gt_cos+0.00000000001))]))
+            orient_abs_err.append(torch.tensor(mean_abs))
             
-        return center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict
+            try:
+                orient_abs_err_dict[obj_cls].append(mean_abs)
+            except:
+                orient_abs_err_dict[obj_cls]=[mean_abs]
+            
+            
+        return center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,orient_abs_err_dict
 
-def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,nc,names,seen):
+def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,orient_abs_err_dict,nc,names,seen):
     
     if len(center_abs_err)>0:
         center_abs_err=torch.mean(torch.tensor(center_abs_err)[torch.isfinite(torch.tensor(center_abs_err))]).cpu().item()
@@ -115,13 +134,13 @@ def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err
         mp, mr, map, mf1 = p.mean(), r.mean(), ap.mean(), f1.mean()
 
     # Print results
-    pf = '%30s' + '%10.3g' * 7  # print format
-    print(pf % ('all', seen, nt.sum(), mp, mr, map, mf1, dim_abs_err))
+    pf = '%30s' + '%10.3g' * 8  # print format
+    print(pf % ('all', seen, nt.sum(), mp, mr, map, mf1, dim_abs_err, orient_abs_err))
 
     # Print results per class
     if nc > 1 and len(stats):
         for i, c in enumerate(ap_class):
-            print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c]))))
+            print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])) ))
 
     # Return results
     maps = np.zeros(nc) + map
@@ -232,13 +251,14 @@ def test(
     print("model device:"+str(device))
     model.eval()
     coco91class = coco80_to_coco91_class()
-    print(('%30s' + '%10s' * 7) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs_err'))
+    print(('%30s' + '%10s' * 8) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs_err', 'alpha_abs'))
     loss, p, r, f1, mp, mr, map, mf1 = 0., 0., 0., 0., 0., 0., 0., 0.
     jdict, stats, ap, ap_class = [], [], [], []
     center_abs_err=[]
     depth_abs_err=[]
     dim_abs_err=[]
     dim_abs_err_dict={}
+    orient_abs_err_dict={}
     orient_abs_err=[]
     with open("avg_shapes.json","r") as f:
         default_dims=json.load(f)
@@ -252,14 +272,14 @@ def test(
             continue
         input_targets,width,height,imgs,targets=prepare_data_for_foward_pass(targets,device,imgs)
         
-        output_roi,center_pred, depth_pred ,pred_dim,orient_pred= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])  # inference and training outputs
+        output_roi,center_pred, depth_pred ,pred_dim,orient_pred, orient_bin_cls= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])  # inference and training outputs
 
-        center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict=compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,
-                                                                                                orient_pred,center_abs_err,depth_abs_err,
+        center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict, orient_abs_err_dict=compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,
+                                                                                                orient_pred,orient_bin_cls,center_abs_err,depth_abs_err,
                                                                                                 dim_abs_err,orient_abs_err,targets,(width,height),
-                                                                                                default_dims_tensor,dim_abs_err_dict)
+                                                                                                default_dims_tensor,dim_abs_err_dict, orient_abs_err_dict)
         stats,seen=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)
-    (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,nc,names,seen)
+    (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,orient_abs_err_dict,nc,names,seen)
     return (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps
 
 

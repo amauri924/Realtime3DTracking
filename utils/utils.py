@@ -276,10 +276,10 @@ def get_depth(pred):
     depth=1/pred -1
     return depth
 
-def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targets, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0):  # predictions, targets, model
     calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
-    lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation = ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank),ft([0]).to(rank)
+    lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation,l_orient_cls = ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank),ft([0]).to(rank)
     txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
 #    with open(str(rank)+'.txt',"a") as f:
 #        f.write("targets"+str(targets)+'\n')
@@ -297,6 +297,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     BCEdepth = nn.BCEWithLogitsLoss(pos_weight=ft([1]).to(rank), reduction='sum')
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=ft([h['obj_pw']]).to(rank), reduction='sum')
     L1loss=torch.nn.L1Loss()
+    CE= nn.CrossEntropyLoss()
     # CE = nn.CrossEntropyLoss()  # (weight=model.class_weights)
     
     depth_bin=[100
@@ -362,8 +363,25 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
 #    pdim=torch.cat([dim_pred[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3) #Select center prediction corresponding to the target class
     pdim=dim_pred
     
-    p_alpha=orient_pred.view(-1,1)
+    
     t_alpha=targets[:,13:14].clone()
+    t_alpha_offset=torch.zeros_like(orient_pred)
+    default_angle=torch.tensor([0.125,0.375,0.625,0.875],device=t_alpha_offset.device)
+    t_alpha_offset=(default_angle-t_alpha).view(-1,4,1)
+    
+    t_cls_orient=torch.min(abs(t_alpha_offset).view(-1,4),1).indices
+    
+    
+    t_sincos_offset= torch.zeros_like(orient_pred)
+    for idx in range(len(t_sincos_offset)):
+        for sincos_cls in range(4):
+            t_sincos_offset[idx,sincos_cls,0]=torch.sin(t_alpha_offset[idx,sincos_cls,0]*2*np.pi)
+            t_sincos_offset[idx,sincos_cls,1]=torch.cos(t_alpha_offset[idx,sincos_cls,0]*2*np.pi)
+    
+    
+    
+    
+    
 
 #    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
     rois=targets[:,2:6].clone() # Rois closest to anchors 
@@ -393,7 +411,9 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
     
-    l_orientation += L1loss(p_alpha,t_alpha)
+    
+    l_orient_cls+=CE(orient_bin_cls,t_cls_orient)
+    l_orientation += L1loss(orient_pred,t_alpha_offset)
     lcent += L1loss(pcent,target_cent)
     ldim += L1loss(pdim,tdim_offsets)*100
     ldepth += L1loss(p_depth,gt_depth)
@@ -401,10 +421,10 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
 #    ldepth/=10
     if not torch.isfinite(ldepth):
         print("err")
-    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation
+    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation + l_orient_cls
 #    loss=lconf_depth+ldepth
 
-    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation, loss)).detach()
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation, l_orient_cls, loss)).detach()
 
 
 

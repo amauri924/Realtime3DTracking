@@ -487,6 +487,7 @@ class orient_pred(nn.Module):
     def __init__(self,nc,num_channel):
         super(orient_pred, self).__init__()
         self.nc=nc
+        self.num_channel=num_channel
 #        self.dep = nn.Sequential(
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
@@ -499,9 +500,10 @@ class orient_pred(nn.Module):
         self.conv3=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, 1, kernel_size=1,
+        self.conv4=nn.Conv2d(num_channel, 8, kernel_size=1,
                   stride=1, padding=0, bias=True)
-        self.sig=nn.Sigmoid()
+        self.fc1=nn.Linear(num_channel,512)
+        self.fc2=nn.Linear(512,4)
 
 
 
@@ -514,9 +516,10 @@ class orient_pred(nn.Module):
         x=self.conv3(x)
         if x.shape[0]>1:
             x=self.bn3(x)
+        bin_cls=self.fc1(x.view(-1,self.num_channel))
+        bin_cls=self.fc2(bin_cls)
         x=self.conv4(x)
-        x=self.sig(x)
-        return x.view(-1,1)
+        return x.view(-1,4,2),bin_cls
 
 
 
@@ -566,10 +569,10 @@ class Model(nn.Module):
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
-            orientation_pred=self.orientation_prediction(pooled_features)
+            orientation_pred,orient_bin_cls=self.orientation_prediction(pooled_features)
             del pooled_features
             del features
-            return rois,center_pred,depth_pred,dimension_pred,orientation_pred
+            return rois,center_pred,depth_pred,dimension_pred,orientation_pred,orient_bin_cls
         
         else:
             p ,features,_=  self.Yolov3(x) # inference output, training output
@@ -580,9 +583,9 @@ class Model(nn.Module):
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
-            orientation_pred=self.orientation_prediction(pooled_features)
+            orientation_pred,orient_bin_cls=self.orientation_prediction(pooled_features)
             
-            return p,center_pred,depth_pred,dimension_pred,orientation_pred
+            return p,center_pred,depth_pred,dimension_pred,orientation_pred,orient_bin_cls
         
         
     def _init_weights(self):

@@ -87,7 +87,7 @@ def print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer
     mloss = (mloss * i + loss_items.cpu().detach()) / (i + 1)  # update mean losses
     loss_scheduler.append(mloss[-1])
     for x in optimizer.param_groups:
-        s = ('%8s%12s' + '%10.3g' * 12) % (
+        s = ('%8s%12s' + '%10.3g' * 13) % (
             '%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), img_size, x['lr'])
     with open(log_path, 'a') as logfile:
         logfile.write(str(rank)+" "+s+"\n")
@@ -360,10 +360,9 @@ def train(
             logfile.write(str(rank)+" "+"Epoch: %i\n"%epoch)
 
 
-        mloss = torch.zeros(9)  # mean losses
+        mloss = torch.zeros(10)  # mean losses
 
         for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized) in enumerate(tqdm(dataloader)):
-            
             
             if opt.depth_aug:
                 targets=rois_augmentation_for_depth(targets,0.2,0.02)
@@ -373,8 +372,8 @@ def train(
             
             # Run model
             with torch.cuda.amp.autocast():
-                pred,pred_center,depth_pred,dim_pred,orient_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-                loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
+                pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
+                loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
            
             # Compute gradient
             scaler.scale(loss).backward()
