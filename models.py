@@ -470,7 +470,7 @@ class Model(nn.Module):
         
 
 
-    def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0,testing=False):
+    def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0,testing=False,detect=False):
 
         if testing:
             self.transfer=False
@@ -499,6 +499,29 @@ class Model(nn.Module):
             del pooled_features
             del features
             return rois,center_pred,depth_pred
+        
+        elif detect:
+            _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
+            io=[]
+            for line in io_orig:
+                line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
+                io.append(line)
+            rois=torch.cat(io,1)
+            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+            for i,roi in enumerate(rois):
+                if roi is None:
+                    rois[i]=torch.tensor([]).to(x.device).view(0,7)
+                    continue
+            
+            device_id=int(str(x.device)[-1])
+            roi=[rois[0][:,:4]]
+            pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/32.0)
+            depth_pred=self.depth_pred(pooled_features)
+            center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
+            del pooled_features
+            del features
+            return rois,center_pred,depth_pred
+        
         
         else:
             p ,features,_=  self.Yolov3(x) # inference output, training output

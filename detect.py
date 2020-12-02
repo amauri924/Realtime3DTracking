@@ -22,7 +22,7 @@ def detect(
         webcam=False
 ):
     device = torch_utils.select_device()
-    torch.backends.cudnn.benchmark = False  # set False for reproducible results
+    torch.backends.cudnn.benchmark = True  # set False for reproducible results
     if os.path.exists(output):
         shutil.rmtree(output)  # delete output folder
     os.makedirs(output)  # make new output folder
@@ -32,7 +32,7 @@ def detect(
         s = (320, 192)  # (320, 192) or (416, 256) or (608, 352) onnx model image size (height, width)
         model = Darknet(cfg, s)
     else:
-        model = Darknet(cfg, img_size)
+        model = Model(cfg,0,transfer=False)
 
     # Load weights
     if weights.endswith('.pt'):  # pytorch format
@@ -69,7 +69,7 @@ def detect(
 
         # Get detections
         img = torch.from_numpy(img).unsqueeze(0).to(device)
-        det, center_pred = model(img,conf_thres=opt.conf_thres, nms_thres=opt.nms_thres)
+        det,center_pred, depth_pred = model(img,conf_thres=conf_thres, nms_thres=nms_thres,detect=True,)
         det=det[0]
 #        det = non_max_suppression(pred, conf_thres, nms_thres)[0]
 
@@ -78,6 +78,7 @@ def detect(
             det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
             idxs=torch.max(det[:,5:],1).indices
             centers=[(center_pred[i,idxs[i]],center_pred[i,idxs[i]+1]) for i in range(len(idxs))]
+            depth_pred=depth_pred*200
             
             # Print results to screen
             print('%gx%g ' % img.shape[2:], end='')  # print image size
@@ -92,13 +93,27 @@ def detect(
                         file.write(('%g ' * 6 + '\n') % (*xyxy, cls, conf))
 
                 #get 3d center pixel coord
-                x=xyxy[0]+centers[j][0]*(xyxy[2]-xyxy[0])
-                y=xyxy[1]+centers[j][1]*(xyxy[3]-xyxy[1])
-                cv2.circle(im0,(int(x.cpu().item()),int(y.cpu().item())),3,color=colors[int(cls)])
-
+                # x=xyxy[0]+centers[j][0]*(xyxy[2]-xyxy[0])
+                # y=xyxy[1]+centers[j][1]*(xyxy[3]-xyxy[1])
+                
+                w_bbox=xyxy[2]-xyxy[0]
+                h_bbox=xyxy[3]-xyxy[1]
+                centerbbox_x=xyxy[0]+w_bbox/2
+                centerbbox_y=xyxy[1]+h_bbox/2
+                
+                x=centers[j][0]*w_bbox+centerbbox_x
+                y=centers[j][1]*h_bbox+centerbbox_y
+                
+                
+                
+                
+                cv2.circle(im0,(round(x.cpu().item()),round(y.cpu().item())),3,color=colors[int(cls)])
+                
+                depth=depth_pred[j]
+                
                 # Add bbox to the image
-                label = '%s %.2f' % (classes[int(cls)], conf)
-                plot_one_box(xyxy, im0, label=label, color=colors[int(cls)])
+                label = '%s %.2f %.1fm' % (classes[int(cls)], conf, depth)
+                plot_one_box(xyxy, im0, label=label, color=colors[int(cls)],line_thickness=1)
 
         print('Done. (%.3fs)' % (time.time() - t))
 
@@ -128,10 +143,10 @@ def detect(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best_1.8.pt', help='path to weights file')
-    parser.add_argument('--images', type=str, default='data/samples', help='path to images')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-GTA.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent_v2.data', help='coco.data file path')
+    parser.add_argument('--weights', type=str, default='weights/Trained_depth/best.pt', help='path to weights file')
+    parser.add_argument('--images', type=str, default='/home/antoine/GTA_Dataset/GTA_Preprocessed_v4/seq_00000/0', help='path to images')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.5, help='iou threshold for non-maximum suppression')

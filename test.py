@@ -157,7 +157,7 @@ def test(
         batch_size=16,
         img_size=416,
         iou_thres=0.6,
-        conf_thres=0.001,
+        conf_thres=0.1,
         nms_thres=0.6,
         save_json=False,
         model=None
@@ -166,7 +166,7 @@ def test(
         device = torch_utils.select_device()
 
         # Initialize model
-        model = Darknet(cfg, img_size).to(device)
+        model = Model(cfg,0,transfer=False).to(device)
         
 
         # Load weights
@@ -189,7 +189,7 @@ def test(
     nc = int(data_cfg['classes'])  # number of classes
     test_path = data_cfg['valid']  # path to test images
     names = load_classes(data_cfg['names'])  # class names
-    available_cpu=7
+    available_cpu=12
 
 
     # Dataloader
@@ -228,10 +228,10 @@ def test(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--batch-size', type=int, default=12, help='size of each image batch')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best_1.1.pt', help='path to weights file')
+    parser.add_argument('--batch-size', type=int, default=4, help='size of each image batch')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-GTA.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent_v2.data', help='coco.data file path')
+    parser.add_argument('--weights', type=str, default='weights/Trained_depth/best.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.6, help='iou threshold for non-maximum suppression')

@@ -445,7 +445,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=8,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=32, help='number of batches to accumulate before optimizing')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-GTA.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
