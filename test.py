@@ -47,7 +47,11 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
         tdim=labels[:, 8:11]*200
         talpha=labels[:, 12:13]*2*np.pi
         p_orient_cls=torch.max(orient_bin_cls,1).indices
-        default_angles=[0.125,0.375,0.625,0.875]
+        default_sincos=torch.tensor([[-0.5,-0.5],
+                                 [-0.5,0.5],
+                                 [0.5,-0.5],
+                                 [0.5,0.5]
+                                 ],device=orient_pred.device)
         
         for idx_pred in range(len(center_pred)):
             target_center=tcent[idx_pred]
@@ -60,10 +64,10 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             gt_sin=math.sin(gt_orient)
             gt_cos=math.cos(gt_orient)
             pred_orient_cls=int(p_orient_cls[idx_pred])
-            pred_sincos=orient_pred[idx_pred,pred_orient_cls,:]
-            pred_angle=default_angles[pred_orient_cls]*2*np.pi-math.atan2(pred_sincos[0].item(),pred_sincos[1].item())
-            p_cos=math.cos(pred_angle)
-            p_sin=math.sin(pred_angle)
+            pred_sincos_offset=orient_pred[idx_pred,pred_orient_cls,:]
+            pred_sincos=default_sincos[pred_orient_cls] - pred_sincos_offset
+            p_cos=pred_sincos[1].item()
+            p_sin=pred_sincos[0].item()
 
             
             
@@ -251,7 +255,7 @@ def test(
     print("model device:"+str(device))
     model.eval()
     coco91class = coco80_to_coco91_class()
-    print(('%30s' + '%10s' * 8) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs_err', 'alpha_abs'))
+    print(('%30s' + '%10s' * 8) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs', 'alpha_abs'))
     loss, p, r, f1, mp, mr, map, mf1 = 0., 0., 0., 0., 0., 0., 0., 0.
     jdict, stats, ap, ap_class = [], [], [], []
     center_abs_err=[]

@@ -135,7 +135,7 @@ def xyxy2xywh(bbox):
     
 
 
-nusc = NuScenes(version='v1.0-trainval', dataroot='/home/antoine/remote_criann/Nuscenes', verbose=True)
+nusc = NuScenes(version='v1.0-mini', dataroot='/home/antoine/remote_criann/Nuscenes', verbose=True)
 
 scenes=nusc.scene
 sample_list=nusc.sample
@@ -165,16 +165,16 @@ for scene in scenes:
         viewpad = np.eye(4)
         viewpad[:camera_intrinsic.shape[0], :camera_intrinsic.shape[1]] = camera_intrinsic
         
-        pixel_to_cam=np.linalg.inv(viewpad)
-        
-        np.save("/home/antoine/remote_criann/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.npy"%(scene_id,sample_id),pixel_to_cam)
+        np.save("/home/antoine/remote_criann/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.npy"%(scene_id,sample_id),viewpad)
         
 
         visible_boxes=[]
         for box in boxes:
             
             visibility=nusc.get('sample_annotation',box.token)['visibility_token']
-            if int(visibility)>2:
+            sample_annotation=nusc.get('sample_annotation',box.token)
+            nusc.render_annotation(sample_annotation['token'])
+            if int(visibility)>0:
                 visible_boxes.append(box)
                 corners=box.corners()
                 corners=transform_3d_to_2d(corners,camera_intrinsic)

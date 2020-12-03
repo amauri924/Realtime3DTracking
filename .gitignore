@@ -15,3 +15,5 @@ Logs/
 __pycache__/
 
 list_shapes.json
+
+*.jpg

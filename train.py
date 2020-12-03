@@ -211,14 +211,14 @@ def train(
     device = rank
     print(device)
     device_loading= torch.tensor([]).to(device).device
-    multi_scale = False
+    multi_scale = True
     available_cpu=7
 
     print('num_cores_available:',available_cpu)
 
     if multi_scale:
-        img_size_min = round(img_size / 32 / 1.5)
-        img_size_max = round(img_size / 32 * 1.5)
+        img_size_min = round(img_size / 32 / 2)
+        img_size_max = round(img_size / 32)
         img_size = img_size_max * 32  # initiate with maximum multi_scale size
     else:
         img_size_min=0
@@ -318,11 +318,11 @@ def train(
 #    if torch.cuda.device_count() > 1:
 #        with open(log_path, 'w') as logfile:
 #            logfile.write("nb GPU : %i\n"%torch.cuda.device_count())
-#    dist.init_process_group(backend='gloo',  # 'distributed backend'
-#                            world_size=world_size,  # number of nodes for distributed training
-#                            rank=rank)  # distributed training node rank
+    # dist.init_process_group(backend='nccl',  # 'distributed backend'
+    #                         world_size=world_size,  # number of nodes for distributed training
+    #                         rank=rank)  # distributed training node rank
 
-#    model = torch.nn.parallel.DistributedDataParallel(model,device_ids=[rank],find_unused_parameters = True)
+    # model = torch.nn.parallel.DistributedDataParallel(model,device_ids=[rank],find_unused_parameters = True)
 
 
 
@@ -344,7 +344,7 @@ def train(
     
     
     for epoch in range(start_epoch, epochs):
-        if epoch < 100:
+        if epoch < 19:
             opt.notest = True
         else:
             opt.notest = False
@@ -363,34 +363,34 @@ def train(
         mloss = torch.zeros(10)  # mean losses
 
         for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized) in enumerate(tqdm(dataloader)):
-            
-            if opt.depth_aug:
-                targets=rois_augmentation_for_depth(targets,0.2,0.02)
-            #Prepare data
-            imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,
-                                        multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
-            
-            # Run model
-            with torch.cuda.amp.autocast():
-                pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-                loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
-           
-            # Compute gradient
-            scaler.scale(loss).backward()
-          
-            #Depth relative error
-            rel_err_=compute_rel_err(depth_pred.float(),targets.float())
-            for value in rel_err_:
-                rel_err.append(value.float())
-           
-            
-            if torch.isnan(loss):
-                with open(log_path, 'a') as logfile:
-                    logfile.write('WARNING: nan loss detected, ending training \n')
-                return pred
-            
-            mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path,rank)
-            
+            if len(targets)>0:
+                if opt.depth_aug:
+                    targets=rois_augmentation_for_depth(targets,0.2,0.02)
+                #Prepare data
+                imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,
+                                            multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
+                
+                # Run model
+                with torch.cuda.amp.autocast():
+                    pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
+                    loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
+               
+                # Compute gradient
+                scaler.scale(loss).backward()
+              
+                #Depth relative error
+                rel_err_=compute_rel_err(depth_pred.float(),targets.float())
+                for value in rel_err_:
+                    rel_err.append(value.float())
+               
+                
+                if torch.isnan(loss):
+                    with open(log_path, 'a') as logfile:
+                        logfile.write('WARNING: nan loss detected, ending training \n')
+                    return pred
+                
+                mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path,rank)
+                
             # Accumulate gradient for x batches before optimizing
             if (i + 1) % accumulate == 0 or (i + 1) == nb:
                 scaler.step(optimizer)
@@ -427,10 +427,10 @@ def train(
 
 def main(opt):
     world_size=torch.cuda.device_count()
-#    mp.spawn(example,
-#        args=(world_size,opt),
-#        nprocs=world_size,
-#        join=True)
+    # mp.spawn(example,
+    #     args=(world_size,opt),
+    #     nprocs=world_size,
+    #     join=True)
     example(0,world_size,opt)
     
 def example(rank, world_size,opt):
@@ -449,14 +449,14 @@ def example(rank, world_size,opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=150, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=64,
+    parser.add_argument('--epochs', type=int, default=20, help='number of epochs')
+    parser.add_argument('--batch-size', type=int, default=4,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=4, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=64, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-GTA.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
-    parser.add_argument('--img-size', type=int, default=416, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--depth_aug', default=False, help='resume training flag')
