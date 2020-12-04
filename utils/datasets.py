@@ -155,7 +155,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
     def __init__(self, path, img_size=416, batch_size=16, augment=False, rect=True, image_weights=False):
         with open(path, 'r') as f:
             img_files = f.read().splitlines()
-            self.img_files = [x for x in img_files if os.path.splitext(x)[-1].lower() in img_formats]
+            self.img_files = np.array([x for x in img_files if os.path.splitext(x)[-1].lower() in img_formats])
 
         n = len(self.img_files)
         bi = np.floor(np.arange(n) / batch_size).astype(np.int)  # batch index
@@ -170,8 +170,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.rect = False if image_weights else rect
 
         # Define labels
-        self.label_files = [x.replace('images', 'labels').replace(os.path.splitext(x)[-1], '.txt')
-                            for x in self.img_files]
+        self.label_files = np.array([x.replace('images', 'labels').replace(os.path.splitext(x)[-1], '.txt')
+                            for x in self.img_files])
 
         # Rectangular Training  https://github.com/ultralytics/yolov3/issues/232
         if self.rect:
@@ -188,8 +188,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             # Sort by aspect ratio
             ar = s[:, 1] / s[:, 0]  # aspect ratio
             i = ar.argsort()
-            self.img_files = [self.img_files[i] for i in i]
-            self.label_files = [self.label_files[i] for i in i]
+            self.img_files = np.array([self.img_files[i] for i in i])
+            self.label_files = np.array([self.label_files[i] for i in i])
             ar = ar[i]
 
             # Set training image shapes
@@ -205,8 +205,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             self.batch_shapes = np.ceil(np.array(shapes) * img_size / 32.).astype(np.int) * 32
 
         # Preload labels (required for weighted CE training)
-        self.imgs = [None] * n
-        self.labels = [None] * n
+        self.imgs = np.array([None] * n)
+        self.labels = np.array([None] * n)
         preload_labels = False
         if preload_labels:
             self.labels = [np.zeros((0, 5))] * n
@@ -313,13 +313,13 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         pixel_to_normalized_resized=np.array([[ratiow/img.shape[0],0,padw/img.shape[0],0],[0,ratioh/img.shape[1],padh/img.shape[1],0],[0,0,1,0],[0,0,0,1]]).astype(np.float32)
 
         # Load labels
-        labels = []
+        # labels = []
         if os.path.isfile(label_path):
             x = self.labels[index]
             if x is None:  # labels not preloaded
                 with open(label_path, 'r') as f:
                     x = np.array([x.split() for x in f.read().splitlines()], dtype=np.float32)
-                    self.labels[index] = x  # save for next time
+                    # self.labels[index] = x  # save for next time
 
             if x.size > 0:
                 # Normalized xywh to pixel xyxy format
