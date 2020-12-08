@@ -95,8 +95,8 @@ def print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer
 
 
 
-def prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized):
-    input_targets=targets.clone()
+def prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized):
+    input_targets=augmented_roi.clone()
     targets = targets.to(device)
     
 
@@ -212,7 +212,7 @@ def train(
     print(device)
     device_loading= torch.tensor([]).to(device).device
     multi_scale = True
-    available_cpu=7
+    available_cpu=12
 
     print('num_cores_available:',available_cpu)
 
@@ -262,17 +262,23 @@ def train(
             del new_state
 
         else:  # resume from latest.pt
-            chkpt = torch.load(best, map_location=device_loading)  # load checkpoint
+            chkpt = torch.load(latest, map_location=device_loading)  # load checkpoint
             model.load_state_dict(chkpt['model'])
 
         if chkpt['optimizer'] is not None:
             if opt.resume:
                 optimizer.load_state_dict(chkpt['optimizer'])
-                best_fitness = chkpt['best_fitness']
-
-        if chkpt['training_results'] is not None:
-            with open('results_'+str(opt.run_id)+'.txt', 'w') as file:
-                file.write(chkpt['training_results'])  # write results.txt
+                try:
+                    best_fitness = chkpt['best_fitness']
+                except:
+                    best_fitness = 1e6
+                    
+        try:
+            if chkpt['training_results'] is not None:
+                with open('results_'+str(opt.run_id)+'.txt', 'w') as file:
+                    file.write(chkpt['training_results'])  # write results.txt
+        except:
+            print("no previous training results")
 
         start_epoch = chkpt['epoch'] + 1
         del chkpt
@@ -291,7 +297,8 @@ def train(
                                   img_size,
                                   batch_size,
                                   augment=True,
-                                  rect=opt.rect)  # rectangular training
+                                  rect=opt.rect,
+                                  depth_aug=opt.depth_aug)  # rectangular training
 
     
     train_sampler = torch.utils.data.distributed.DistributedSampler(dataset,
@@ -309,7 +316,7 @@ def train(
                             sampler=train_sampler)
 
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 3e-3, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate))
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 1e-3, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate))
     scheduler.last_epoch = start_epoch - 1
 
 
@@ -344,7 +351,7 @@ def train(
     
     
     for epoch in range(start_epoch, epochs):
-        if epoch < 19:
+        if epoch < 45:
             opt.notest = True
         else:
             opt.notest = False
@@ -362,12 +369,12 @@ def train(
 
         mloss = torch.zeros(10)  # mean losses
 
-        for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized) in enumerate(tqdm(dataloader)):
+        for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi) in enumerate(tqdm(dataloader)):
             if len(targets)>0:
-                if opt.depth_aug:
-                    targets=rois_augmentation_for_depth(targets,0.2,0.02)
+                # if opt.depth_aug:
+                #     targets=rois_augmentation_for_depth(targets,0.2,0.02)
                 #Prepare data
-                imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,i,nb,epoch,accumulate,
+                imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,
                                             multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
                 
                 # Run model
@@ -415,7 +422,13 @@ def train(
             with open(log_path, 'a') as logfile:
                 logfile.write('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, dt))
     
-    
+            chkpt = {'epoch': epoch,
+                 'model': model.module.state_dict() if type(
+                     model) is nn.parallel.DistributedDataParallel else model.state_dict(),
+                 'optimizer': optimizer.state_dict()}
+
+            # Save latest checkpoint
+            torch.save(chkpt, latest)
             # Calculate mAP (always test final epoch, skip first 5 if opt.nosave)
             if not opt.notest:
                 results,best_fitness=run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,result_path,best_fitness,epoch,epochs,latest,best)
@@ -449,17 +462,17 @@ def example(rank, world_size,opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=20, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=4,
+    parser.add_argument('--epochs', type=int, default=50, help='number of epochs')
+    parser.add_argument('--batch-size', type=int, default=15,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=64, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=16, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-GTA.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
-    parser.add_argument('--resume', default=False, help='resume training flag')
-    parser.add_argument('--depth_aug', default=False, help='resume training flag')
+    parser.add_argument('--resume', default=True, help='resume training flag')
+    parser.add_argument('--depth_aug', default=True, help='resume training flag')
     parser.add_argument('--transfer', default=True, help='transfer learning flag')
     parser.add_argument('--num-workers', type=int, default=7, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')

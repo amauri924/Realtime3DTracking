@@ -140,11 +140,16 @@ def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err
     # Print results
     pf = '%30s' + '%10.3g' * 8  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, map, mf1, dim_abs_err, orient_abs_err))
+    with open("output.txt","a") as f:
+        f.write(pf % ('all', seen, nt.sum(), mp, mr, map, mf1, dim_abs_err, orient_abs_err)+'\n')
 
     # Print results per class
     if nc > 1 and len(stats):
         for i, c in enumerate(ap_class):
             print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])) ))
+            with open("output.txt","a") as f:
+                f.write(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])) )+'\n')
+
 
     # Return results
     maps = np.zeros(nc) + map
@@ -256,6 +261,10 @@ def test(
     model.eval()
     coco91class = coco80_to_coco91_class()
     print(('%30s' + '%10s' * 8) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs', 'alpha_abs'))
+    with open("output.txt","a") as f:
+        f.write(('%30s' + '%10s' * 8) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs', 'alpha_abs')+'\n')
+
+    
     loss, p, r, f1, mp, mr, map, mf1 = 0., 0., 0., 0., 0., 0., 0., 0.
     jdict, stats, ap, ap_class = [], [], [], []
     center_abs_err=[]
@@ -270,7 +279,7 @@ def test(
     for class_idx in default_dims:
         default_dims_tensor[int(class_idx),:]=torch.tensor([shape for shape in default_dims[class_idx]])
     
-    for batch_i, (imgs, targets, paths, shapes,_,_) in enumerate(tqdm(dataloader)):
+    for batch_i, (imgs, targets, paths, shapes,_,_,_) in enumerate(tqdm(dataloader)):
         if len(targets)==0:
             print("skipping empty target")
             continue

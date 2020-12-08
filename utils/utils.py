@@ -921,20 +921,25 @@ def plot_results(start=0, stop=0):  # from utils.utils import *; plot_results()
     fig.savefig('results.png', dpi=300)
 
 def rois_augmentation_for_depth(targets,sigma_shape,sigma_center):
-    new_targets=torch.cat((targets,targets.clone(),targets.clone(),targets.clone(),
-    targets.clone(),targets.clone(),targets.clone(),
-    targets.clone(),targets.clone(),targets.clone())) # rois augmentation for depth prediction
+    new_targets=targets # rois augmentation for depth prediction
 
-    for i in range(len(targets),len(new_targets)):
+    for i in range(len(targets)):
         sigma_shape=sigma_shape #Bbox width and height will be augmented with a max of 20% of their original value
         sigma_center=sigma_center #Bbox 3d centers will be augmented with a max of 2% of their original value
         h_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
         w_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
         x_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
         y_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
-        new_targets[i,6]+=x_var*new_targets[i,6]
-        new_targets[i,7]+=y_var*new_targets[i,7]
-        new_targets[i,4]+=w_var*new_targets[i,4]
-        new_targets[i,5]+=h_var*new_targets[i,5]
-    new_targets[len(targets):,2:4]=new_targets[len(targets):,6:8] #Use 3D centers as center for the rois
+        x1=(new_targets[i,2]+x_var*new_targets[i,2])-(new_targets[i,4]+w_var*new_targets[i,4])/2
+        x2=(new_targets[i,2]+x_var*new_targets[i,2])+(new_targets[i,4]+w_var*new_targets[i,4])/2
+        y1=(new_targets[i,3]+x_var*new_targets[i,3])-(new_targets[i,5]+w_var*new_targets[i,5])/2
+        y2=(new_targets[i,3]+x_var*new_targets[i,3])+(new_targets[i,5]+w_var*new_targets[i,5])/2
+        
+        if min(x1,x2)>=0 and max(x1,x2)<=1:
+            new_targets[i,2]+=x_var*new_targets[i,2]
+            new_targets[i,4]+=w_var*new_targets[i,4]
+        
+        if min(y1,y2)>=0 and max(y1,y2)<=1:
+            new_targets[i,3]+=y_var*new_targets[i,3]
+            new_targets[i,5]+=h_var*new_targets[i,5]
     return new_targets

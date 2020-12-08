@@ -152,7 +152,7 @@ class LoadWebcam:  # for inference
 
 
 class LoadImagesAndLabels(Dataset):  # for training/testing
-    def __init__(self, path, img_size=416, batch_size=16, augment=False, rect=True, image_weights=False):
+    def __init__(self, path, img_size=416, batch_size=16, augment=False, rect=True, image_weights=False, depth_aug=False):
         with open(path, 'r') as f:
             img_files = f.read().splitlines()
             self.img_files = np.array([x for x in img_files if os.path.splitext(x)[-1].lower() in img_formats])
@@ -168,6 +168,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.augment = augment
         self.image_weights = image_weights
         self.rect = False if image_weights else rect
+        self.depth_aug=depth_aug
 
         # Define labels
         self.label_files = np.array([x.replace('images', 'labels').replace(os.path.splitext(x)[-1], '.txt')
@@ -380,15 +381,21 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img, dtype=np.float32)  # uint8 to float32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
+        
+        if random.random() > 0.5 and self.depth_aug:
+            augmented_roi=rois_augmentation_for_depth(labels_out,0.1,0.02)
+        else:
+            augmented_roi=labels_out.clone()
 
-        return torch.from_numpy(img), labels_out, img_path, (h, w),torch.tensor(calib),torch.tensor(pixel_to_normalized_resized)
+        return torch.from_numpy(img), labels_out, img_path, (h, w),torch.tensor(calib),torch.tensor(pixel_to_normalized_resized),augmented_roi
 
     @staticmethod
     def collate_fn(batch):
-        img, label, path, hw,calib,pixel_to_normalized_resized = list(zip(*batch))  # transposed
+        img, label, path, hw,calib,pixel_to_normalized_resized,augmented_roi = list(zip(*batch))  # transposed
         for i, l in enumerate(label):
             l[:, 0] = i  # add target image index for build_targets()
-        return torch.stack(img, 0), torch.cat(label, 0), path, hw, torch.stack(calib,0),torch.stack(pixel_to_normalized_resized,0)
+            augmented_roi[i][:,0]=i
+        return torch.stack(img, 0), torch.cat(label, 0), path, hw, torch.stack(calib,0),torch.stack(pixel_to_normalized_resized,0),torch.cat(augmented_roi, 0)
 
 
 def letterbox(img, new_shape=416, color=(127.5, 127.5, 127.5), mode='auto'):
@@ -524,3 +531,28 @@ def convert_images2bmp():
             '/Users/glennjocher/PycharmProjects/', '../')
         with open(label_path.replace('5k', '5k_bmp'), 'w') as file:
             file.write(lines)
+
+
+def rois_augmentation_for_depth(targets,sigma_shape,sigma_center):
+    new_targets=targets.clone() # rois augmentation for depth prediction
+
+    for i in range(len(targets)):
+        sigma_shape=sigma_shape #Bbox width and height will be augmented with a max of 20% of their original value
+        sigma_center=sigma_center #Bbox 3d centers will be augmented with a max of 2% of their original value
+        h_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
+        w_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
+        x_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
+        y_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
+        x1=(new_targets[i,2]+x_var*new_targets[i,2])-(new_targets[i,4]+w_var*new_targets[i,4])/2
+        x2=(new_targets[i,2]+x_var*new_targets[i,2])+(new_targets[i,4]+w_var*new_targets[i,4])/2
+        y1=(new_targets[i,3]+x_var*new_targets[i,3])-(new_targets[i,5]+w_var*new_targets[i,5])/2
+        y2=(new_targets[i,3]+x_var*new_targets[i,3])+(new_targets[i,5]+w_var*new_targets[i,5])/2
+        
+        if min(x1,x2)>=0 and max(x1,x2)<=1:
+            new_targets[i,2]+=x_var
+            new_targets[i,4]+=w_var*new_targets[i,4]
+        
+        if min(y1,y2)>=0 and max(y1,y2)<=1:
+            new_targets[i,3]+=y_var
+            new_targets[i,5]+=h_var*new_targets[i,5]
+    return new_targets

@@ -8,8 +8,8 @@ Created on Mon Sep 14 09:40:29 2020
 
 import os
 
-file_path="data/GTA_3dcent/test.txt"
-dir_criann="/home/antoine/remote_criann/GTA_Preprocessed_v4/"
+file_path="data/GTA_3dcent/train.txt"
+dir_criann="/media/antoine/NVMe/GTA_Dataset/GTA_Preprocessed_v4/"
 
 with open(file_path,'r') as f:
     files=[file.split('\n')[0] for file in f.readlines()]
@@ -17,7 +17,7 @@ with open(file_path,'r') as f:
 new_paths=[]
 
 for file in files:
-    new_paths.append(os.path.join(dir_criann,*file.split('/')[4:]))
+    new_paths.append(os.path.join(dir_criann,*file.split('/')[5:]))
     
     
 
