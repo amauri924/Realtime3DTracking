@@ -126,7 +126,8 @@ def prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,acc
     resize_matrix[:,0,:]*=imgs.shape[2]
     resize_matrix[:,1,:]*=imgs.shape[3]
     
-    imgs = imgs.to(device,non_blocking=True)
+    imgs = imgs.to(device=device,non_blocking=True)
+    imgs=imgs.contiguous(memory_format=torch.channels_last)
     input_targets = input_targets.to(device,non_blocking=True)
     
     
@@ -221,8 +222,8 @@ def train(
         img_size_max = round(img_size / 32)
         img_size = img_size_max * 32  # initiate with maximum multi_scale size
     else:
-        img_size_min=0
-        img_size_max=0
+        img_size_min=round(img_size / 32)
+        img_size_max=round(img_size / 32)
         
         
     # Configure run
@@ -231,11 +232,11 @@ def train(
     nc = int(data_dict['classes'])  # number of classes
 
     # Initialize model
-    model = Model(cfg,hyp,transfer=False).to(device)
+    model = Model(cfg,hyp,transfer=False).to(device,memory_format=torch.channels_last)
 
     # Optimizer
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
-                           lr=1e-4,  weight_decay=3e-6)
+                           lr=1e-4,  weight_decay=3e-7)
     scaler = torch.cuda.amp.GradScaler()
     
     cutoff = -1  # backbone reaches to cutoff layer
@@ -316,7 +317,7 @@ def train(
                             sampler=train_sampler)
 
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 1e-3, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate))
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate))
     scheduler.last_epoch = start_epoch - 1
 
 
@@ -343,7 +344,7 @@ def train(
     with open(log_path, 'a') as logfile:
         logfile.write(str(rank)+" "+"nb epochs : %i\n"%epochs)
         
-    with open("avg_shapes.json","r") as f:
+    with open("data/3dcent-NS/avg_shapes.json","r") as f:
         default_dims=json.load(f)
     default_dims_tensor=torch.zeros(len(default_dims),3,device=device)
     for class_idx in default_dims:
@@ -351,7 +352,7 @@ def train(
     
     
     for epoch in range(start_epoch, epochs):
-        if epoch < 45:
+        if epoch < 100:
             opt.notest = True
         else:
             opt.notest = False
@@ -370,6 +371,24 @@ def train(
         mloss = torch.zeros(10)  # mean losses
 
         for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi) in enumerate(tqdm(dataloader)):
+            
+            if i==0:
+                imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,
+                                            multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
+                imgs=torch.randint(0,255,(opt.batch_size,3,img_size_max*32,img_size_max*32),dtype=torch.float32, device=device)
+                imgs/=255.
+                
+                with torch.cuda.amp.autocast():
+                    pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
+                    loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
+               
+                # Compute gradient
+                scaler.scale(loss).backward()
+                for param in model.parameters():
+                    param.grad = None
+                
+                
+            
             if len(targets)>0:
                 # if opt.depth_aug:
                 #     targets=rois_augmentation_for_depth(targets,0.2,0.02)
@@ -402,7 +421,8 @@ def train(
             if (i + 1) % accumulate == 0 or (i + 1) == nb:
                 scaler.step(optimizer)
                 scaler.update() 
-                optimizer.zero_grad()
+                for param in model.parameters():
+                    param.grad = None
                 scheduler.step()
 
         if rank == 0:
@@ -462,16 +482,16 @@ def example(rank, world_size,opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=50, help='number of epochs')
+    parser.add_argument('--epochs', type=int, default=150, help='number of epochs')
     parser.add_argument('--batch-size', type=int, default=15,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=16, help='number of batches to accumulate before optimizing')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-GTA.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/GTA_3dcent.data', help='coco.data file path')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
-    parser.add_argument('--resume', default=True, help='resume training flag')
+    parser.add_argument('--resume', default=False, help='resume training flag')
     parser.add_argument('--depth_aug', default=True, help='resume training flag')
     parser.add_argument('--transfer', default=True, help='transfer learning flag')
     parser.add_argument('--num-workers', type=int, default=7, help='number of Pytorch DataLoader workers')

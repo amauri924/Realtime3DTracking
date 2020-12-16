@@ -314,7 +314,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         pixel_to_normalized_resized=np.array([[ratiow/img.shape[0],0,padw/img.shape[0],0],[0,ratioh/img.shape[1],padh/img.shape[1],0],[0,0,1,0],[0,0,0,1]]).astype(np.float32)
 
         # Load labels
-        # labels = []
+        labels = np.array([])
         if os.path.isfile(label_path):
             x = self.labels[index]
             if x is None:  # labels not preloaded

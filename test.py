@@ -29,7 +29,7 @@ def prepare_data_for_foward_pass(targets,device,imgs):
 
 
 def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,orient_bin_cls,center_abs_err,depth_abs_err,dim_abs_err,
-                                    orient_abs_err,targets,img_shape,default_dims_tensor,dim_abs_err_dict,orient_abs_err_dict):
+                                    orient_abs_err,targets,img_shape,default_dims_tensor,dim_abs_err_dict,orient_abs_err_dict,depth_abs_err_dict):
         # Statistics per image
         labels=targets[:,1:]
         tcls=labels[:,0]
@@ -100,7 +100,15 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             
             
             center_abs_err.append(torch.mean(torch.tensor([abs(abs(predicted_center[0]-target_center[0])/target_center[0]),abs(abs(predicted_center[1]-target_center[1])/target_center[1])])))
-            depth_abs_err.append(abs(abs(predicted_depth-gt_depth)/(gt_depth+0.00001)))
+            
+            depth_abs=abs(abs(predicted_depth-gt_depth)/(gt_depth+0.00001))
+            depth_abs_err.append(depth_abs)
+            try:
+                depth_abs_err_dict[obj_cls].append(depth_abs.item())
+            except:
+                depth_abs_err_dict[obj_cls]=[depth_abs.item()]
+            
+            
             
             mean_abs=np.mean(np.array([abs(abs(p_sin-gt_sin)/(gt_sin+0.00000000001)),abs(abs(p_cos-gt_cos)/(gt_cos+0.00000000001))]))
             orient_abs_err.append(torch.tensor(mean_abs))
@@ -111,9 +119,9 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
                 orient_abs_err_dict[obj_cls]=[mean_abs]
             
             
-        return center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,orient_abs_err_dict
+        return center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,orient_abs_err_dict,depth_abs_err_dict
 
-def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,orient_abs_err_dict,nc,names,seen):
+def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,orient_abs_err_dict,depth_abs_err_dict,nc,names,seen):
     
     if len(center_abs_err)>0:
         center_abs_err=torch.mean(torch.tensor(center_abs_err)[torch.isfinite(torch.tensor(center_abs_err))]).cpu().item()
@@ -138,17 +146,17 @@ def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err
         mp, mr, map, mf1 = p.mean(), r.mean(), ap.mean(), f1.mean()
 
     # Print results
-    pf = '%30s' + '%10.3g' * 8  # print format
-    print(pf % ('all', seen, nt.sum(), mp, mr, map, mf1, dim_abs_err, orient_abs_err))
+    pf = '%30s' + '%10.3g' * 9  # print format
+    print(pf % ('all', seen, nt.sum(), mp, mr, map, mf1, dim_abs_err, orient_abs_err, depth_abs_err))
     with open("output.txt","a") as f:
-        f.write(pf % ('all', seen, nt.sum(), mp, mr, map, mf1, dim_abs_err, orient_abs_err)+'\n')
+        f.write(pf % ('all', seen, nt.sum(), mp, mr, map, mf1, dim_abs_err, orient_abs_err, depth_abs_err)+'\n')
 
     # Print results per class
     if nc > 1 and len(stats):
         for i, c in enumerate(ap_class):
-            print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])) ))
+            print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])), np.mean(np.array(depth_abs_err_dict[c])) ))
             with open("output.txt","a") as f:
-                f.write(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])) )+'\n')
+                f.write(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])), np.mean(np.array(depth_abs_err_dict[c])) )+'\n')
 
 
     # Return results
@@ -222,7 +230,7 @@ def test(
         device = torch_utils.select_device()
 
         # Initialize model
-        model = Darknet(cfg, img_size).to(device)
+        model =  model = Model(cfg,0,transfer=False).to(device)
         
 
         # Load weights
@@ -260,9 +268,9 @@ def test(
     print("model device:"+str(device))
     model.eval()
     coco91class = coco80_to_coco91_class()
-    print(('%30s' + '%10s' * 8) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs', 'alpha_abs'))
+    print(('%30s' + '%10s' * 9) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs', 'alpha_abs','depth_abs'))
     with open("output.txt","a") as f:
-        f.write(('%30s' + '%10s' * 8) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs', 'alpha_abs')+'\n')
+        f.write(('%30s' + '%10s' * 9) % ('Class', 'Images', 'Targets', 'P', 'R', 'mAP', 'F1', 'dim_abs', 'alpha_abs','depth_abs')+'\n')
 
     
     loss, p, r, f1, mp, mr, map, mf1 = 0., 0., 0., 0., 0., 0., 0., 0.
@@ -272,8 +280,9 @@ def test(
     dim_abs_err=[]
     dim_abs_err_dict={}
     orient_abs_err_dict={}
+    depth_abs_err_dict={}
     orient_abs_err=[]
-    with open("avg_shapes.json","r") as f:
+    with open("data/3dcent-NS/avg_shapes.json","r") as f:
         default_dims=json.load(f)
     default_dims_tensor=torch.zeros(len(default_dims),3,device=device)
     for class_idx in default_dims:
@@ -287,12 +296,12 @@ def test(
         
         output_roi,center_pred, depth_pred ,pred_dim,orient_pred, orient_bin_cls= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])  # inference and training outputs
 
-        center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict, orient_abs_err_dict=compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,
+        center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict, orient_abs_err_dict, depth_abs_err_dict=compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,
                                                                                                 orient_pred,orient_bin_cls,center_abs_err,depth_abs_err,
                                                                                                 dim_abs_err,orient_abs_err,targets,(width,height),
-                                                                                                default_dims_tensor,dim_abs_err_dict, orient_abs_err_dict)
+                                                                                                default_dims_tensor,dim_abs_err_dict, orient_abs_err_dict, depth_abs_err_dict)
         stats,seen=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)
-    (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,orient_abs_err_dict,nc,names,seen)
+    (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict,orient_abs_err_dict,depth_abs_err_dict,nc,names,seen)
     return (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps
 
 
@@ -301,15 +310,15 @@ def test(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--batch-size', type=int, default=12, help='size of each image batch')
+    parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best_1.1.pt', help='path to weights file')
+    parser.add_argument('--weights', type=str, default='weights/L1_smooth/latest.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.6, help='iou threshold for non-maximum suppression')
     parser.add_argument('--save-json', default=False, help='save a cocoapi-compatible JSON results file')
-    parser.add_argument('--img-size', type=int, default=608, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     opt = parser.parse_args()
     print(opt)
 

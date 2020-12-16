@@ -11,7 +11,7 @@ import argparse
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--list_file', type=str, default="/home/antoine/remote_criann/NuScenes_3d_BBOX/list.txt", help='list where the images are stored')
+parser.add_argument('--list_file', type=str, default="/home/antoine/Realtime3DTracking/data/3dcent-NS/list.txt", help='list where the images are stored')
 parser.add_argument('--output_folder', type=str, default='data/3dcent-NS/', help='output path')
 args = parser.parse_args()
 
@@ -131,7 +131,7 @@ train_detect = \
      'scene-1091', 'scene-1092', 'scene-1093', 'scene-1094', 'scene-1095', 'scene-1096', 'scene-1097', 'scene-1098',
      'scene-1099', 'scene-1100', 'scene-1101', 'scene-1102', 'scene-1104', 'scene-1105']
 
-train_detect=train_detect+train_track
+train_detect=train_detect
 with open(args.list_file,'r') as f:
     image_list=[path.split('\n')[0] for path in f.readlines()]
 
@@ -141,7 +141,7 @@ train_list=[]
 test_list=[]
 unassigned=[]
 for i,image_path in enumerate(image_list):
-    image_path=os.path.join("/home/antoine/remote_criann/NuScenes_3d_BBOX/data",image_path.split('/')[-1])
+    image_path=os.path.join("/media/antoine/NVMe/data-NuScenes/3D_BBOX_data/",image_path.split('/')[-1])
     val_scene_idxs=[int(idx.split('-')[1]) for idx in val]
     train_scene_idxs=[int(idx.split('-')[1]) for idx in train_detect]
     scene_idx=int(image_path.split('scene')[1].split('_')[0])

@@ -1,4 +1,4 @@
-classes=6
+classes=9
 train=./data/3dcent-NS/train.txt
 valid=./data/3dcent-NS/test.txt
 names=data/3dcent-NS/3dcent-NS.names

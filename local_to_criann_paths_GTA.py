@@ -8,8 +8,8 @@ Created on Mon Sep 14 09:40:29 2020
 
 import os
 
-file_path="data/GTA_3dcent/train.txt"
-dir_criann="/media/antoine/NVMe/GTA_Dataset/GTA_Preprocessed_v4/"
+file_path="data/3dcent-NS/test.txt"
+dir_criann="/save/2020010/amauri03/NuScenes_3d_BBOX/"
 
 with open(file_path,'r') as f:
     files=[file.split('\n')[0] for file in f.readlines()]
