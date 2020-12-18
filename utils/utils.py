@@ -290,7 +290,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
         model = model.module
         
     h = model.hyp  # hyperparameters
-    
+    real_hyp=model.real_hyp
     # Define criteria
     MSE = nn.MSELoss(reduction='sum')
     BCEcls = nn.BCEWithLogitsLoss(pos_weight=ft([h['cls_pw']]).to(rank), reduction='sum')
@@ -298,7 +298,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=ft([h['obj_pw']]).to(rank), reduction='sum')
     L1loss=torch.nn.L1Loss()
     
-    L2loss = torch.nn.MSELoss()
+    L2loss = torch.nn.L1Loss()
     
     CE= nn.CrossEntropyLoss()
     # CE = nn.CrossEntropyLoss()  # (weight=model.class_weights)
@@ -355,27 +355,27 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
     
     
     
-    tdim_offsets=torch.zeros_like(dim_pred)
-    for image_idx in range(len(tdim_offsets)):
-        tdim_offsets[image_idx,:,:]=default_dims_tensor/200 - tdim[image_idx,:]
+    # tdim_offsets=torch.zeros_like(dim_pred)
+    # for image_idx in range(len(tdim_offsets)):
+    #     tdim_offsets[image_idx,:,:]=default_dims_tensor/200 - tdim[image_idx,:]
     
 #    pdim= torch.autograd.Variable(torch.ones(tdim.shape[0], tdim.shape[1],device=tdim.device), requires_grad=True)
 #    for idx,index in enumerate(targets[:,1]):
 #        pdim[idx,:]=dim_pred[idx,int(index),:]
     
-    pdim_closest=torch.cat([dim_pred[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3) #Select center prediction corresponding to the target class
-    tdim_closest=torch.cat([tdim_offsets[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3)
+    # pdim_closest=torch.cat([dim_pred[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3) #Select center prediction corresponding to the target class
+    # tdim_closest=torch.cat([tdim_offsets[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3)
     
-    pdim=dim_pred
+    # pdim=dim_pred
     
     
     t_alpha=targets[:,13:14].clone()
 #    t_alpha_offset=torch.zeros_like(orient_pred)
-    default_sincos=torch.tensor([[-0.5,-0.5],
-                                 [-0.5,0.5],
-                                 [0.5,-0.5],
-                                 [0.5,0.5]
-                                 ],device=orient_pred.device)
+    # default_sincos=torch.tensor([[-0.5,-0.5],
+    #                              [-0.5,0.5],
+    #                              [0.5,-0.5],
+    #                              [0.5,0.5]
+    #                              ],device=orient_pred.device)
 #    t_alpha_offset=(default_angle-t_alpha).view(-1,4,1)
     
 #    t_cls_orient=torch.min(abs(t_alpha_offset).view(-1,4),1).indices
@@ -386,14 +386,14 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
         t_sincos[idx,0]=torch.sin(t_alpha[idx,0]*2*np.pi)
         t_sincos[idx,1]=torch.cos(t_alpha[idx,0]*2*np.pi)
     
-    t_sincos_offset=torch.zeros_like(orient_pred)
-    for idx in range(len(t_sincos)):
-        t_sincos_offset[idx,:,:]=default_sincos - t_sincos[idx]
+    # t_sincos_offset=torch.zeros_like(orient_pred)
+    # for idx in range(len(t_sincos)):
+    #     t_sincos_offset[idx,:,:]=default_sincos - t_sincos[idx]
 #    t_sincos_offset=
-    t_cls_orient=torch.min(torch.sum(abs(t_sincos_offset),2),1).indices
+    # t_cls_orient=torch.min(torch.sum(abs(t_sincos_offset),2),1).indices
     
-    t_smallest_sincos_offset=torch.cat([t_sincos_offset[idx,int(index),:] for idx,index in enumerate(t_cls_orient)]).view(-1,2)
-    p_smallest_sincos_offset=torch.cat([orient_pred[idx,int(index),:] for idx,index in enumerate(t_cls_orient)]).view(-1,2)
+    # t_smallest_sincos_offset=torch.cat([t_sincos_offset[idx,int(index),:] for idx,index in enumerate(t_cls_orient)]).view(-1,2)
+    # p_smallest_sincos_offset=torch.cat([orient_pred[idx,int(index),:] for idx,index in enumerate(t_cls_orient)]).view(-1,2)
 
 #    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
     rois=targets[:,2:6].clone() # Rois closest to anchors 
@@ -423,15 +423,17 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
     
+
+    # l_orient_cls+=CE(orient_bin_cls,t_cls_orient)
+    l_orientation += L2loss(orient_pred,t_sincos)
     
-    l_orient_cls+=CE(orient_bin_cls,t_cls_orient)
-    l_orientation += L2loss(orient_pred,t_sincos_offset)*0.1
     
-    ldim += L2loss(pdim,tdim_offsets)*10
+    
+    # ldim += L2loss(pdim,tdim_offsets)*10
     
     #Give more weight to the loss of the bin closest to the target
-    l_orientation += L2loss(p_smallest_sincos_offset,t_smallest_sincos_offset)*10
-    ldim += L2loss(pdim_closest,tdim_closest)*100
+    # l_orientation += L2loss(p_smallest_sincos_offset,t_smallest_sincos_offset)*10
+    # ldim += L2loss(pdim_closest,tdim_closest)*100
     
     lcent += L2loss(pcent,target_cent)
     
@@ -440,8 +442,15 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
 #    ldepth/=10
     if not torch.isfinite(ldepth):
         print("err")
-    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation + l_orient_cls
-#    loss=lconf_depth+ldepth
+    # loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation + l_orient_cls
+    
+    
+    l_orientation *= (k * real_hyp['orient']) / nt
+    ldepth *= (k * real_hyp['depth']) / nt
+    
+    
+    
+    loss=lcent + ldepth + l_orientation 
 
     return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation, l_orient_cls, loss)).detach()
 

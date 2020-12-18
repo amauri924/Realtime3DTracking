@@ -156,7 +156,7 @@ def xyxy2xywh(bbox):
     
 
 
-nusc = NuScenes(version='v1.0-mini', dataroot='/home/antoine/Remote_criann/Nuscenes', verbose=True)
+nusc = NuScenes(version='v1.0-trainval', dataroot='/save/2020010/amauri03/Nuscenes', verbose=True)
 
 scenes=nusc.scene
 sample_list=nusc.sample
@@ -165,6 +165,15 @@ valid_classes=['vehicle','human','animal']
 max_distance=200
 shape_dict_global={}
 list_classes=[]
+coco_classes=["person",
+"bicycle",
+"car",
+"motorcycle",
+"airplane",
+"bus",
+"train",
+"truck"]
+
 
 for scene in scenes:
 
@@ -189,7 +198,7 @@ for scene in scenes:
         viewpad = np.eye(4)
         viewpad[:camera_intrinsic.shape[0], :camera_intrinsic.shape[1]] = camera_intrinsic
         
-        np.save("/home/antoine/Remote_criann/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.npy"%(scene_id,sample_id),viewpad)
+        np.save("/save/2020010/amauri03/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.npy"%(scene_id,sample_id),viewpad)
         
         # rgb = np.array(Image.open(data_path))
         # fig, (ax1, ax2) = plt.subplots(2)
@@ -212,8 +221,17 @@ for scene in scenes:
                 
                     obj_class=nusc.get('sample_annotation',box.token)['category_name'].split('.')[1]
                     
-                    if obj_class not in list_classes:
-                        list_classes.append(obj_class)
+                    if label=="human":
+                        obj_class="person"
+                    
+                    elif obj_class == "trailer":
+                        obj_class="truck"
+                    
+                    elif obj_class not in coco_classes:
+                        break
+                    
+                    # if obj_class not in list_classes:
+                    #     list_classes.append(obj_class)
                         
                     visible_boxes.append(box)
                     corners=box.corners()
@@ -284,11 +302,11 @@ for scene in scenes:
         im = cv2.imread(data_path)
         im_width=im.shape[1]
         im_height=im.shape[0]
-        cv2.imwrite("/home/antoine/Remote_criann/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.png"%(scene_id,sample_id), im)
-        with open("/home/antoine/Remote_criann/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.txt"%(scene_id,sample_id),'w') as f:
+        cv2.imwrite("/save/2020010/amauri03/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.png"%(scene_id,sample_id), im)
+        with open("/save/2020010/amauri03/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.txt"%(scene_id,sample_id),'w') as f:
             for obj_class,bbox,center,dist,size_wlh,theta_bisse,alpha in labels:
                 
-                obj_idx=list_classes.index(obj_class)
+                obj_idx=coco_classes.index(obj_class)
                 x,y,w,h=xyxy2xywh(bbox)
                 center_x=center[0,0]/im_width
                 center_y=center[1,0]/im_height
@@ -301,11 +319,11 @@ for scene in scenes:
                 f.write(str(obj_idx)+' '+str(x)+' '+str(y)+' '+str(w)+' '+str(h)+' '+str(center_x)+' '+str(center_y)+' '+str(dist/max_distance)+' '+str(size_wlh[0]/max_distance)+' '+str(size_wlh[2]/max_distance)+' '+str(size_wlh[1]/max_distance)+' '+str(theta_bisse)+' '+str(alpha)+'\n')
 
         with open("list.txt",'a') as f:
-            f.write("/home/antoine/Remote_criann/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.png"%(scene_id,sample_id)+'\n')
+            f.write("/save/2020010/amauri03/NuScenes_3d_BBOX/3D_BBOX_data/scene%i_sample%i.png"%(scene_id,sample_id)+'\n')
 
 
 with open("list_classes.txt","w") as f:
-    for obj in list_classes:
+    for obj in coco_classes:
         f.write(obj+'\n')
 
 with open("list_shapes.json","w") as f:

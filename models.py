@@ -500,10 +500,10 @@ class orient_pred(nn.Module):
         self.conv3=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, 8, kernel_size=1,
+        self.conv4=nn.Conv2d(num_channel, 2, kernel_size=1,
                   stride=1, padding=0, bias=True)
-        self.fc1=nn.Linear(num_channel,512)
-        self.fc2=nn.Linear(512,4)
+        # self.fc1=nn.Linear(num_channel,512)
+        # self.fc2=nn.Linear(512,4)
 
 
 
@@ -516,17 +516,18 @@ class orient_pred(nn.Module):
         x=self.conv3(x)
         if x.shape[0]>1:
             x=self.bn3(x)
-        bin_cls=self.fc1(x.view(-1,self.num_channel))
-        bin_cls=self.fc2(bin_cls)
+        # bin_cls=self.fc1(x.view(-1,self.num_channel))
+        # bin_cls=self.fc2(bin_cls)
+        bin_cls=0
         x=self.conv4(x)
-        return x.view(-1,4,2),bin_cls
+        return x.view(-1,2),bin_cls
 
 
 
 class Model(nn.Module):
     """YOLOv3 object detection model"""
 
-    def __init__(self, cfg,hyp,transfer=False, img_size=(416, 416),encoder="Darknet"):
+    def __init__(self, cfg,hyp,real_hyp,transfer=False, img_size=(416, 416),encoder="Darknet"):
         super(Model, self).__init__()
         self.num_channel=1024
         
@@ -539,6 +540,7 @@ class Model(nn.Module):
         self.orientation_prediction=orient_pred(self.nc,self.num_channel)
         self.transfer=transfer
         self.hyp=hyp
+        self.real_hyp=real_hyp
         
 
 
@@ -575,7 +577,8 @@ class Model(nn.Module):
             return rois,center_pred,depth_pred,dimension_pred,orientation_pred,orient_bin_cls
         
         else:
-            p ,features,_=  self.Yolov3(x) # inference output, training output
+            with torch.no_grad():
+                p ,features,_=  self.Yolov3(x) # inference output, training output
             
             #Compute 3D center or object depth using GT bbox
             #For multi-gpu

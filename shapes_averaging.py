@@ -10,13 +10,18 @@ import os
 import json
 import numpy as np
 
-with open('data/3dcent-NS/list_shapes.json','r') as f:
+with open('list_shapes.json','r') as f:
     data = json.load(f)
     
-with open("data/3dcent-NS/3dcent-NS.names","r") as f:
+with open("data/coco.names","r") as f:
     classes=[obj.split('\n')[0] for obj in f.readlines()]
 
 avg_shape={}
+for class_obj in classes:
+    avg_shape[classes.index(class_obj)]=(0,0,0)
+    
+    
+    
 for obj_class in data:
     avg_width,avg_height,avg_length=[],[],[]
     for obj in data[obj_class]:

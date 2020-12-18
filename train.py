@@ -16,7 +16,13 @@ import sys
 #import torch_optimizer as optim
 import torch.multiprocessing as mp
 import json
+from pathlib import Path
+import yaml
 
+import warnings
+
+if not sys.warnoptions:
+    warnings.simplefilter("ignore")
 
 os.environ['MASTER_ADDR'] = 'localhost'
 os.environ['MASTER_PORT'] = '12355'
@@ -31,28 +37,19 @@ hyp = {'giou': 1.666,  # giou loss gain
        'cls_pw': 3.34,  # cls BCELoss positive_weight
        'obj': 12.61,  # obj loss gain
        'obj_pw': 8.338,  # obj BCELoss positive_weight
+       'orient':2, # orientation loss gain
+       'depth':2, # depth loss gain
        'iou_t': 0.2705,  # iou target-anchor training threshold
-#       'lr0': 0.001,  # initial learning rate
+      'max_lr': 5e-5,  # initial learning rate (SGD=1E-2, Adam=1E-3)
+      'div_factor': 25,  # final OneCycleLR learning rate (lr0 * lrf)
+        'final_div_factor': 1e4,  # final OneCycleLR learning rate (lr0 * lrf)
        'lr0': 1e-3,  # initial learning rate
        'lrf': -4.,  # final learning rate = lr0 * (10 ** lrf)
        'momentum': 0.90,  # SGD momentum
        'weight_decay': 0.0005}  # optimizer weight decay
 
-def print_mutation(hyp, results):
-    # Write mutation results
-    a = '%11s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
-    b = '%11.4g' * len(hyp) % tuple(hyp.values())  # hyperparam values
-    c = '%11.3g' * len(results) % results  # results (P, R, mAP, F1, test_loss)
-    print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
-
-    if opt.bucket:
-        os.system('gsutil cp gs://%s/evolve.txt .' % opt.bucket)  # download evolve.txt
-        with open('evolve.txt', 'a') as f:  # append result
-            f.write(c + b + '\n')
-        os.system('gsutil cp evolve.txt gs://%s' % opt.bucket)  # upload evolve.txt
-    else:
-        with open('evolve.txt', 'a') as f:
-            f.write(c + b + '\n')
+real_hyp= {'orient':2, # orientation loss gain
+            'depth':2}  # final OneCycleLR learning rate (lr0 * lrf)  # optimizer weight decay
 
 def setup_net_transfert(model):
     model.transfer=True
@@ -161,7 +158,7 @@ def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,res
 
     
     # Update best map
-    fitness = results[5]+(1-results[2])+results[6]+results[7]
+    fitness = results[5]+results[7]
     if fitness < best_fitness and fitness!=0:
         print("best error replaced by %f"%fitness)
         best_fitness = fitness
@@ -190,8 +187,8 @@ def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,res
     return results,best_fitness
 
 
-def train(
-        cfg,
+def train(cfg,
+          real_hyp,
         data_cfg,
         opt,
         img_size=416,
@@ -232,11 +229,11 @@ def train(
     nc = int(data_dict['classes'])  # number of classes
 
     # Initialize model
-    model = Model(cfg,hyp,transfer=False).to(device,memory_format=torch.channels_last)
+    model = Model(cfg,hyp,real_hyp,transfer=False).to(device,memory_format=torch.channels_last)
 
     # Optimizer
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
-                           lr=1e-4,  weight_decay=3e-7)
+                           lr=1e-4,  weight_decay=3e-6)
     scaler = torch.cuda.amp.GradScaler()
     
     cutoff = -1  # backbone reaches to cutoff layer
@@ -317,7 +314,7 @@ def train(
                             sampler=train_sampler)
 
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate))
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 5e-5, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate)+1)
     scheduler.last_epoch = start_epoch - 1
 
 
@@ -352,13 +349,16 @@ def train(
     
     
     for epoch in range(start_epoch, epochs):
-        if epoch < 100:
+        if epoch < -1:
             opt.notest = True
         else:
             opt.notest = False
         
         loss_scheduler=[]
         model.train()
+        
+        model.Yolov3.eval()
+        
         rel_err=[]
         #set new learning rate
 #        for param_group in optimizer.param_groups:
@@ -371,23 +371,6 @@ def train(
         mloss = torch.zeros(10)  # mean losses
 
         for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi) in enumerate(tqdm(dataloader)):
-            
-            if i==0:
-                imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,
-                                            multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
-                imgs=torch.randint(0,255,(opt.batch_size,3,img_size_max*32,img_size_max*32),dtype=torch.float32, device=device)
-                imgs/=255.
-                
-                with torch.cuda.amp.autocast():
-                    pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-                    loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
-               
-                # Compute gradient
-                scaler.scale(loss).backward()
-                for param in model.parameters():
-                    param.grad = None
-                
-                
             
             if len(targets)>0:
                 # if opt.depth_aug:
@@ -426,6 +409,8 @@ def train(
                 scheduler.step()
 
         if rank == 0:
+            for param in model.parameters():
+                param.grad = None
             rel_err=torch.mean(torch.tensor(rel_err))
             with open("depth_rel_err.txt","a") as f:
                 f.write("rel err:"+str(rel_err)+'\n')
@@ -455,6 +440,9 @@ def train(
 
     with open(log_path, 'a') as logfile:
         logfile.write("ending \n")
+        
+        
+    torch.cuda.empty_cache()
     return results
 
 
@@ -468,6 +456,7 @@ def main(opt):
     
 def example(rank, world_size,opt):
     results=train(opt.cfg,
+                  hyp,
                 opt.data_cfg,
                 opt,
                 img_size=opt.img_size,
@@ -478,16 +467,50 @@ def example(rank, world_size,opt):
                 rank=rank
                 )
 
+def fitness(x):
+    w = [0.0, 0.0, 0.0, 0.0,0.1,0.4,0.0,0.6] # weights for [mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err]
+    return ((1-x[:, :8]) * w).sum(1) 
+
+def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket=''):
+    # Print mutation results to evolve.txt (for use with train.py --evolve)
+    a = '%10s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
+    b = '%10.3g' * len(hyp) % tuple(hyp.values())  # hyperparam values
+    c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 3)
+    print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
+
+    if bucket:
+        url = 'gs://%s/evolve.txt' % bucket
+        if gsutil_getsize(url) > (os.path.getsize('evolve.txt') if os.path.exists('evolve.txt') else 0):
+            os.system('gsutil cp %s .' % url)  # download evolve.txt if larger than local
+
+    with open('evolve.txt', 'a') as f:  # append result
+        f.write(c + b + '\n')
+    x = np.unique(np.loadtxt('evolve.txt', ndmin=2), axis=0)  # load unique rows
+    x = x[np.argsort(-fitness(x))]  # sort
+    np.savetxt('evolve.txt', x, '%10.3g')  # save sort by fitness
+
+    # Save yaml
+    for i, k in enumerate(hyp.keys()):
+        hyp[k] = float(x[0, i + 7])
+    with open(yaml_file, 'w') as f:
+        results = tuple(x[0, :7])
+        c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 3)
+        f.write('# Hyperparameter Evolution Results\n# Generations: %g\n# Metrics: ' % len(x) + c + '\n\n')
+        yaml.dump(hyp, f, sort_keys=False)
+
+    if bucket:
+        os.system('gsutil cp evolve.txt %s gs://%s' % (yaml_file, bucket))  # upload
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=150, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=15,
+    parser.add_argument('--epochs', type=int, default=10, help='number of epochs')
+    parser.add_argument('--batch-size', type=int, default=16,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=16, help='number of batches to accumulate before optimizing')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
+    parser.add_argument('--accumulate', type=int, default=4, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/3dcent-COCO.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
@@ -498,7 +521,7 @@ if __name__ == '__main__':
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')
     parser.add_argument('--notest', default=False, help='only test final epoch')
     parser.add_argument('--xywh', action='store_true', help='use xywh loss instead of GIoU loss')
-    parser.add_argument('--evolve', action='store_true', help='evolve hyperparameters')
+    parser.add_argument('--evolve', default=True, help='evolve hyperparameters')
     parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
     parser.add_argument('--var', default=0, type=int, help='debug variable')
     opt = parser.parse_args()
@@ -507,8 +530,68 @@ if __name__ == '__main__':
     if opt.evolve:
         opt.notest = True  # only test final epoch
         opt.nosave = True  # only save final checkpoint
+        
+        meta = {'orient':(1, 0.01, 1.0), # orientation loss gain
+                'depth':(1, 0.01, 1.0)} # depth loss gain}  # image mixup (probability)
+        
+        yaml_file = Path('hyp_evolved.yaml')  # save best result here
+        
+        for _ in range(300):  # generations to evolve
+            if os.path.exists('evolve.txt'):  # if evolve.txt exists: select best hyps and mutate
+                # Select parent(s)
+                parent = 'single'  # parent selection method: 'single' or 'weighted'
+                x = np.loadtxt('evolve.txt', ndmin=2)
+                n = min(5, len(x))  # number of previous results to consider
+                x = x[np.argsort(-fitness(x))][:n]  # top n mutations
+                w = fitness(x) - fitness(x).min()  # weights
+                if parent == 'single' or len(x) == 1:
+                    # x = x[random.randint(0, n - 1)]  # random selection
+                    x = x[random.choices(range(n), weights=w)[0]]  # weighted selection
+                elif parent == 'weighted':
+                    x = (x * w.reshape(n, 1)).sum(0) / w.sum()  # weighted combination
 
-    main(opt)
+                # Mutate
+                mp, s = 0.8, 0.2  # mutation probability, sigma
+                npr = np.random
+                npr.seed(int(time.time()))
+                g = np.array([x[0] for x in meta.values()])  # gains 0-1
+                ng = len(meta)
+                v = np.ones(ng)
+                while all(v == 1):  # mutate until a change occurs (prevent duplicates)
+                    v = (g * (npr.random(ng) < mp) * npr.randn(ng) * npr.random() * s + 1).clip(0.3, 3.0)
+                for i, k in enumerate(real_hyp.keys()):  # plt.hist(v.ravel(), 300)
+                    real_hyp[k] = float(x[i + 7] * v[i])  # mutate
+
+            # Constrain to limits
+            for k, v in meta.items():
+                real_hyp[k] = max(real_hyp[k], v[1])  # lower limit
+                real_hyp[k] = min(real_hyp[k], v[2])  # upper limit
+                real_hyp[k] = round(real_hyp[k], 5)  # significant digits
+
+            # Train mutation
+            results = train(opt.cfg,
+                            real_hyp,
+                            opt.data_cfg,
+                            opt,
+                            img_size=opt.img_size,
+                            epochs=opt.epochs,
+                            batch_size=opt.batch_size,
+                            accumulate=opt.accumulate,
+                            world_size=torch.cuda.device_count(),
+                            rank=0)
+
+            # Write mutation results
+            print_mutation(real_hyp.copy(), results, yaml_file, opt.bucket)
+
+        # Plot results
+        plot_evolution(yaml_file)
+        print('Hyperparameter evolution complete. Best results saved as: %s\nCommand to train a new model with these '
+              'hyperparameters: $ python train.py --hyp %s' % (yaml_file, yaml_file))
+        
+        
+        
+    else:
+        main(opt)
 
 
     # Train
