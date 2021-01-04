@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 import torch
 import math
 from tqdm import tqdm
-import test as test  # import test.py to get mAP after each epoch
+import test
 from models import *
 from utils.datasets import *
 from utils.utils import *
@@ -87,7 +87,7 @@ def print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer
     mloss = (mloss * i + loss_items.cpu().detach()) / (i + 1)  # update mean losses
     loss_scheduler.append(mloss[-1])
     for x in optimizer.param_groups:
-        s = ('%8s%12s' + '%10.3g' * 13) % (
+        s = ('%8s%12s' + '%10.3g' * 12) % (
             '%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), img_size, x['lr'])
     with open(log_path, 'a') as logfile:
         logfile.write(str(rank)+" "+s+"\n")
@@ -127,7 +127,6 @@ def prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,acc
     resize_matrix[:,1,:]*=imgs.shape[3]
     
     imgs = imgs.to(device=device,non_blocking=True)
-    imgs=imgs.contiguous(memory_format=torch.channels_last)
     input_targets = input_targets.to(device,non_blocking=True)
     
     
@@ -161,7 +160,7 @@ def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,res
 
     
     # Update best map
-    fitness = results[5]+(1-results[2])+results[6]+results[7]
+    fitness = (results[5]+(1-results[2])+results[6]+(1-results[7]))/4
     if fitness < best_fitness and fitness!=0:
         print("best error replaced by %f"%fitness)
         best_fitness = fitness
@@ -232,11 +231,11 @@ def train(
     nc = int(data_dict['classes'])  # number of classes
 
     # Initialize model
-    model = Model(cfg,hyp,transfer=False).to(device,memory_format=torch.channels_last)
+    model = Model(cfg,hyp,transfer=False).to(device)
 
     # Optimizer
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
-                           lr=1e-4,  weight_decay=3e-7)
+                           lr=1e-4,  weight_decay=3e-5, amsgrad=True)
     scaler = torch.cuda.amp.GradScaler()
     
     cutoff = -1  # backbone reaches to cutoff layer
@@ -317,7 +316,7 @@ def train(
                             sampler=train_sampler)
 
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate))
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate)+1)
     scheduler.last_epoch = start_epoch - 1
 
 
@@ -352,7 +351,7 @@ def train(
     
     
     for epoch in range(start_epoch, epochs):
-        if epoch < 100:
+        if epoch < 20:
             opt.notest = True
         else:
             opt.notest = False
@@ -367,25 +366,26 @@ def train(
         with open(log_path, 'a') as logfile:
             logfile.write(str(rank)+" "+"Epoch: %i\n"%epoch)
 
+        pbar = enumerate(dataloader)
+        pbar = tqdm(pbar, total=nb)
+        mloss = torch.zeros(9)  # mean losses
 
-        mloss = torch.zeros(10)  # mean losses
-
-        for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi) in enumerate(tqdm(dataloader)):
+        for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi) in pbar:
             
-            if i==0:
-                imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,
-                                            multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
-                imgs=torch.randint(0,255,(opt.batch_size,3,img_size_max*32,img_size_max*32),dtype=torch.float32, device=device)
-                imgs/=255.
+        #     if i==0:
+        #         imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,
+        #                                     multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
+        #         imgs=torch.randint(0,255,(opt.batch_size,3,img_size_max*32,img_size_max*32),dtype=torch.float32, device=device)
+        #         imgs/=255.
                 
-                with torch.cuda.amp.autocast():
-                    pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-                    loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
+        #         with torch.cuda.amp.autocast():
+        #             pred,pred_center,depth_pred,dim_pred,orient_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
+        #             loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
                
-                # Compute gradient
-                scaler.scale(loss).backward()
-                for param in model.parameters():
-                    param.grad = None
+        #         # Compute gradient
+        #         scaler.scale(loss).backward()
+        #         for param in model.parameters():
+        #             param.grad = None
                 
                 
             
@@ -398,25 +398,47 @@ def train(
                 
                 # Run model
                 with torch.cuda.amp.autocast():
-                    pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-                    loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred,orient_bin_cls, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
+                    pred,pred_center,depth_pred,dim_pred,orient_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
+                    loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
                
                 # Compute gradient
                 scaler.scale(loss).backward()
               
                 #Depth relative error
-                rel_err_=compute_rel_err(depth_pred.float(),targets.float())
-                for value in rel_err_:
-                    rel_err.append(value.float())
-               
+                # rel_err_=compute_rel_err(depth_pred.float(),targets.float())
+                # for value in rel_err_:
+                #     rel_err.append(value.float())
+                
                 
                 if torch.isnan(loss):
                     with open(log_path, 'a') as logfile:
                         logfile.write('WARNING: nan loss detected, ending training \n')
                     return pred
                 
+                # OS_batch=[]
+                # rel_err_batch=[]
+                # p_alpha=test.get_alpha(orient_pred.cpu().data.numpy())
+                # talpha=targets[:, 13:14]*2*np.pi
+                # for idx_pred in range(len(talpha)):
+                #     talpha_mod=torch.tensor([talpha[idx_pred,0:1]-2*np.pi,talpha[idx_pred,0:1]+2*np.pi,talpha[idx_pred,0:1]])
+                #     talpha_mod=talpha_mod[torch.min(abs(talpha_mod),0).indices].item()
+                #     OS,_=test.get_orientation_score(p_alpha[idx_pred],talpha_mod)
+                #     value=rel_err_[idx_pred]
+                #     rel_err.append(value.float())
+                #     rel_err_batch.append(value.item())
+                #     OS_batch.append(OS)
+                    
+                # OS_batch=np.mean(np.array(OS_batch))
+                # rel_err_batch=np.mean(np.array(rel_err_batch))
+                
+
+                
                 mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path,rank)
                 
+                
+                s = ('%10s' * 1 + '%10.4g' * 9) % (
+                        '%g/%g' % (epoch, epochs - 1), *loss_items)
+                pbar.set_description(s)
             # Accumulate gradient for x batches before optimizing
             if (i + 1) % accumulate == 0 or (i + 1) == nb:
                 scaler.step(optimizer)
@@ -426,9 +448,9 @@ def train(
                 scheduler.step()
 
         if rank == 0:
-            rel_err=torch.mean(torch.tensor(rel_err))
-            with open("depth_rel_err.txt","a") as f:
-                f.write("rel err:"+str(rel_err)+'\n')
+            # rel_err=torch.mean(torch.tensor(rel_err))
+            # with open("depth_rel_err.txt","a") as f:
+            #     f.write("rel err:"+str(rel_err)+'\n')
             loss_scheduler=torch.mean(torch.tensor(loss_scheduler)).item()
             with open("epoch_loss.txt","a") as f:
                 f.write("Epoch loss:"+str(loss_scheduler)+'\n')
@@ -482,7 +504,7 @@ def example(rank, world_size,opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=150, help='number of epochs')
+    parser.add_argument('--epochs', type=int, default=100, help='number of epochs')
     parser.add_argument('--batch-size', type=int, default=15,
                         help='batch size')
     parser.add_argument('--accumulate', type=int, default=16, help='number of batches to accumulate before optimizing')

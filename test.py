@@ -27,8 +27,28 @@ def prepare_data_for_foward_pass(targets,device,imgs):
     input_targets = input_targets.to(device,non_blocking=True)
     return input_targets,width,height,imgs,targets
 
+def get_alpha(rot):
+    # output: (B, 8) [bin1_cls[0], bin1_cls[1], bin1_sin, bin1_cos, 
+    #                 bin2_cls[0], bin2_cls[1], bin2_sin, bin2_cos]
+    idx = rot[:, 1] > rot[:, 5]
+    alpha1=np.zeros(len(rot[:, 2]))
+    alpha2=np.zeros(len(rot[:, 2]))
+    
+    for i in range(len(alpha1)):
+        alpha1_mod=torch.tensor([np.arctan(rot[i, 2] / rot[i, 3]) - (2*np.pi),np.arctan(rot[i, 2] / rot[i, 3]) + (2*np.pi),np.arctan(rot[i, 2] / rot[i, 3])])
+        alpha1[i] = alpha1_mod[torch.min(abs(alpha1_mod),0).indices].item()
+    
+        alpha2_mod=torch.tensor([np.arctan(rot[i, 6] / rot[i, 7]) + (np.pi),np.arctan(rot[i, 6] / rot[i, 7]) + (3*np.pi),np.arctan(rot[i, 6] / rot[i, 7]) - (np.pi)])
+        alpha2[i] = alpha2_mod[torch.min(abs(alpha2_mod),0).indices].item()
+    return alpha1 * idx + alpha2 * (1 - idx)
 
-def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,orient_bin_cls,center_abs_err,depth_abs_err,dim_abs_err,
+
+def get_orientation_score(alpha_pd,alpha_gt):
+    OS=(1.0 + np.cos(alpha_gt - alpha_pd)) / 2.0
+    delta_theta=np.arccos(2*OS-1.0)*180/np.pi
+    return OS,delta_theta
+
+def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,center_abs_err,depth_abs_err,dim_abs_err,
                                     orient_abs_err,targets,img_shape,default_dims_tensor,dim_abs_err_dict,orient_abs_err_dict,depth_abs_err_dict):
         # Statistics per image
         labels=targets[:,1:]
@@ -46,12 +66,9 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
         
         tdim=labels[:, 8:11]*200
         talpha=labels[:, 12:13]*2*np.pi
-        p_orient_cls=torch.max(orient_bin_cls,1).indices
-        default_sincos=torch.tensor([[-0.5,-0.5],
-                                 [-0.5,0.5],
-                                 [0.5,-0.5],
-                                 [0.5,0.5]
-                                 ],device=orient_pred.device)
+
+        
+        p_alpha=get_alpha(orient_pred.cpu().data.numpy())
         
         for idx_pred in range(len(center_pred)):
             target_center=tcent[idx_pred]
@@ -59,18 +76,7 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             
             gt_depth=tdepth[idx_pred]
             predicted_depth=depth_pred[idx_pred]
-            
-            gt_orient=talpha[idx_pred].item()
-            gt_sin=math.sin(gt_orient)
-            gt_cos=math.cos(gt_orient)
-            pred_orient_cls=int(p_orient_cls[idx_pred])
-            pred_sincos_offset=orient_pred[idx_pred,pred_orient_cls,:]
-            pred_sincos=default_sincos[pred_orient_cls] - pred_sincos_offset
-            p_cos=pred_sincos[1].item()
-            p_sin=pred_sincos[0].item()
 
-            
-            
             obj_cls=int(tcls[idx_pred])
             gt_dim=tdim[idx_pred]
             predicted_dim=default_dims_tensor[obj_cls,:] - pred_dim[idx_pred,obj_cls,:]*200
@@ -108,9 +114,11 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             except:
                 depth_abs_err_dict[obj_cls]=[depth_abs.item()]
             
+            talpha_mod=torch.tensor([talpha[idx_pred,0:1]-2*np.pi,talpha[idx_pred,0:1]+2*np.pi,talpha[idx_pred,0:1]])
+            talpha_mod=talpha_mod[torch.min(abs(talpha_mod),0).indices].item()
             
-            
-            mean_abs=np.mean(np.array([abs(abs(p_sin-gt_sin)/(gt_sin+0.00000000001)),abs(abs(p_cos-gt_cos)/(gt_cos+0.00000000001))]))
+            mean_abs,_=get_orientation_score(p_alpha[idx_pred],talpha_mod)
+
             orient_abs_err.append(torch.tensor(mean_abs))
             
             try:
@@ -294,10 +302,10 @@ def test(
             continue
         input_targets,width,height,imgs,targets=prepare_data_for_foward_pass(targets,device,imgs)
         
-        output_roi,center_pred, depth_pred ,pred_dim,orient_pred, orient_bin_cls= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])  # inference and training outputs
+        output_roi,center_pred, depth_pred ,pred_dim,orient_pred= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])  # inference and training outputs
 
         center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict, orient_abs_err_dict, depth_abs_err_dict=compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,
-                                                                                                orient_pred,orient_bin_cls,center_abs_err,depth_abs_err,
+                                                                                                orient_pred,center_abs_err,depth_abs_err,
                                                                                                 dim_abs_err,orient_abs_err,targets,(width,height),
                                                                                                 default_dims_tensor,dim_abs_err_dict, orient_abs_err_dict, depth_abs_err_dict)
         stats,seen=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)

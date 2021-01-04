@@ -502,8 +502,6 @@ class orient_pred(nn.Module):
         self.bn3=nn.BatchNorm2d(num_channel)
         self.conv4=nn.Conv2d(num_channel, 8, kernel_size=1,
                   stride=1, padding=0, bias=True)
-        self.fc1=nn.Linear(num_channel,512)
-        self.fc2=nn.Linear(512,4)
 
 
 
@@ -516,10 +514,8 @@ class orient_pred(nn.Module):
         x=self.conv3(x)
         if x.shape[0]>1:
             x=self.bn3(x)
-        bin_cls=self.fc1(x.view(-1,self.num_channel))
-        bin_cls=self.fc2(bin_cls)
         x=self.conv4(x)
-        return x.view(-1,4,2),bin_cls
+        return x
 
 
 
@@ -542,7 +538,7 @@ class Model(nn.Module):
         
 
 
-    def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0,testing=False):
+    def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0,testing=False,detect=False):
 
         if testing:
             self.transfer=False
@@ -569,10 +565,59 @@ class Model(nn.Module):
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
-            orientation_pred,orient_bin_cls=self.orientation_prediction(pooled_features)
+            
+            #Compute orientation
+            orientation_pred=self.orientation_prediction(pooled_features).flatten(start_dim=1)
+            divider1=torch.sqrt(orientation_pred[:,2:3]**2+orientation_pred[:,3:4]**2)
+            b1sin=orientation_pred[:,2:3]/divider1
+            b1cos=orientation_pred[:,3:4]/divider1
+            
+            divider2=torch.sqrt(orientation_pred[:,6:7]**2+orientation_pred[:,7:8]**2)
+            b2sin=orientation_pred[:,6:7]/divider2
+            b2cos=orientation_pred[:,7:8]/divider2
+            
+            rotation=torch.cat([orientation_pred[:,0:2],b1sin,b1cos,orientation_pred[:,4:6],b2sin,b2cos],1)
+            
             del pooled_features
             del features
-            return rois,center_pred,depth_pred,dimension_pred,orientation_pred,orient_bin_cls
+            return rois,center_pred,depth_pred,dimension_pred,rotation
+        
+        elif detect:
+            _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
+            io=[]
+            for line in io_orig:
+                line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
+                io.append(line)
+            rois=torch.cat(io,1)
+            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+            for i,roi in enumerate(rois):
+                if roi is None:
+                    rois[i]=torch.tensor([]).to(x.device).view(0,7)
+                    continue
+            
+            device_id=int(str(x.device)[-1])
+            roi=[rois[0][:,:4]]
+            pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/32.0)
+            depth_pred=self.depth_pred(pooled_features)
+            center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
+            dimension_pred=self.dimension_prediction(pooled_features)/100
+            
+            #Compute orientation
+            orientation_pred=self.orientation_prediction(pooled_features).flatten(start_dim=1)
+            divider1=torch.sqrt(orientation_pred[:,2:3]**2+orientation_pred[:,3:4]**2)
+            b1sin=orientation_pred[:,2:3]/divider1
+            b1cos=orientation_pred[:,3:4]/divider1
+            
+            divider2=torch.sqrt(orientation_pred[:,6:7]**2+orientation_pred[:,7:8]**2)
+            b2sin=orientation_pred[:,6:7]/divider2
+            b2cos=orientation_pred[:,7:8]/divider2
+            
+            rotation=torch.cat([orientation_pred[:,0:2],b1sin,b1cos,orientation_pred[:,4:6],b2sin,b2cos],1)
+            
+            del pooled_features
+            del features
+            return rois,center_pred,depth_pred,dimension_pred,rotation
+        
         
         else:
             p ,features,_=  self.Yolov3(x) # inference output, training output
@@ -583,9 +628,20 @@ class Model(nn.Module):
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
-            orientation_pred,orient_bin_cls=self.orientation_prediction(pooled_features)
             
-            return p,center_pred,depth_pred,dimension_pred,orientation_pred,orient_bin_cls
+            #Compute orientation
+            orientation_pred=self.orientation_prediction(pooled_features).flatten(start_dim=1)
+            divider1=torch.sqrt(orientation_pred[:,2:3]**2+orientation_pred[:,3:4]**2)
+            b1sin=orientation_pred[:,2:3]/divider1
+            b1cos=orientation_pred[:,3:4]/divider1
+            
+            divider2=torch.sqrt(orientation_pred[:,6:7]**2+orientation_pred[:,7:8]**2)
+            b2sin=orientation_pred[:,6:7]/divider2
+            b2cos=orientation_pred[:,7:8]/divider2
+            
+            rotation=torch.cat([orientation_pred[:,0:2],b1sin,b1cos,orientation_pred[:,4:6],b2sin,b2cos],1)
+            
+            return p,center_pred,depth_pred,dimension_pred,rotation
         
         
     def _init_weights(self):

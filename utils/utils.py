@@ -276,10 +276,10 @@ def get_depth(pred):
     depth=1/pred -1
     return depth
 
-def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targets, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0):  # predictions, targets, model
     calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
-    lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation,l_orient_cls = ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank),ft([0]).to(rank)
+    lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation = ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank)
     txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
 #    with open(str(rank)+'.txt',"a") as f:
 #        f.write("targets"+str(targets)+'\n')
@@ -336,15 +336,10 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
             tclsm[range(nb), tcls[i]] = 1.0
             lcls += BCEcls(pi[..., 5:], tclsm)  # cls loss (BCE)
 
-            # lcls += CE(pi[..., 5:], tcls[i])  # cls loss (CE)
 
-            # Append targets to text file
-            # with open('targets.txt', 'a') as file:
-            #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
 
         lobj += BCEobj(pi0[..., 4], tobj)  # obj loss
     pcent= p_center.view(-1,2) #Associated 3D centers
-#    pcent=torch.cat([pcent.view(pcent.shape[0],-1,2)[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,2) #Select center prediction corresponding to the target class
     gt_depth=targets[:,8].clone().view(-1,1)
     p_depth=pred_depth
     
@@ -358,11 +353,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
     tdim_offsets=torch.zeros_like(dim_pred)
     for image_idx in range(len(tdim_offsets)):
         tdim_offsets[image_idx,:,:]=default_dims_tensor/200 - tdim[image_idx,:]
-    
-#    pdim= torch.autograd.Variable(torch.ones(tdim.shape[0], tdim.shape[1],device=tdim.device), requires_grad=True)
-#    for idx,index in enumerate(targets[:,1]):
-#        pdim[idx,:]=dim_pred[idx,int(index),:]
-    
+        
     pdim_closest=torch.cat([dim_pred[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3) #Select center prediction corresponding to the target class
     tdim_closest=torch.cat([tdim_offsets[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3)
     
@@ -370,30 +361,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
     
     
     t_alpha=targets[:,13:14].clone()
-#    t_alpha_offset=torch.zeros_like(orient_pred)
-    default_sincos=torch.tensor([[-0.5,-0.5],
-                                 [-0.5,0.5],
-                                 [0.5,-0.5],
-                                 [0.5,0.5]
-                                 ],device=orient_pred.device)
-#    t_alpha_offset=(default_angle-t_alpha).view(-1,4,1)
-    
-#    t_cls_orient=torch.min(abs(t_alpha_offset).view(-1,4),1).indices
-    
-    
-    t_sincos= torch.zeros((len(t_alpha),2),device=orient_pred.device)
-    for idx in range(len(t_sincos)):
-        t_sincos[idx,0]=torch.sin(t_alpha[idx,0]*2*np.pi)
-        t_sincos[idx,1]=torch.cos(t_alpha[idx,0]*2*np.pi)
-    
-    t_sincos_offset=torch.zeros_like(orient_pred)
-    for idx in range(len(t_sincos)):
-        t_sincos_offset[idx,:,:]=default_sincos - t_sincos[idx]
-#    t_sincos_offset=
-    t_cls_orient=torch.min(torch.sum(abs(t_sincos_offset),2),1).indices
-    
-    t_smallest_sincos_offset=torch.cat([t_sincos_offset[idx,int(index),:] for idx,index in enumerate(t_cls_orient)]).view(-1,2)
-    p_smallest_sincos_offset=torch.cat([orient_pred[idx,int(index),:] for idx,index in enumerate(t_cls_orient)]).view(-1,2)
+    l_orientation=compute_rot_loss(t_alpha,orient_pred,l_orientation)
 
 #    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
     rois=targets[:,2:6].clone() # Rois closest to anchors 
@@ -424,26 +392,26 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,orient_bin_cls, targ
     lobj *= (k * h['obj']) / ng
     
     
-    l_orient_cls+=CE(orient_bin_cls,t_cls_orient)
-    l_orientation += L2loss(orient_pred,t_sincos_offset)*0.1
+
+
     
     ldim += L2loss(pdim,tdim_offsets)*10
     
     #Give more weight to the loss of the bin closest to the target
-    l_orientation += L2loss(p_smallest_sincos_offset,t_smallest_sincos_offset)*10
-    ldim += L2loss(pdim_closest,tdim_closest)*100
+
+    ldim += L1loss(pdim_closest,tdim_closest)*100
     
-    lcent += L2loss(pcent,target_cent)
+    lcent += L1loss(pcent,target_cent)
     
-    ldepth += L2loss(p_depth,gt_depth)
+    ldepth += L1loss(p_depth,gt_depth)
 #    ldepth += L1loss(pred_loc,target_loc)
 #    ldepth/=10
     if not torch.isfinite(ldepth):
         print("err")
-    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation + l_orient_cls
+    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation 
 #    loss=lconf_depth+ldepth
 
-    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation, l_orient_cls, loss)).detach()
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation, loss)).detach()
 
 
 
@@ -943,3 +911,63 @@ def rois_augmentation_for_depth(targets,sigma_shape,sigma_center):
             new_targets[i,3]+=y_var*new_targets[i,3]
             new_targets[i,5]+=h_var*new_targets[i,5]
     return new_targets
+
+
+def compute_rot_loss(t_alpha,orient_pred,l_orientation):
+    
+    loss_res=torch.cuda.FloatTensor([0],device=orient_pred.device)
+    
+    #convert t_alpha from normalized to radiant
+    t_alpha*=2*np.pi
+    
+    #Create 2 bin for alpha, bin covers 210° each
+    #Bin centers are 0° and 180°
+    bin_centers=torch.tensor([0,np.pi])
+    
+    res_gt=torch.zeros([t_alpha.shape[0],2],device=orient_pred.device)
+    bin_gt=torch.zeros([t_alpha.shape[0],2],device=orient_pred.device).long()
+    
+    # res_gt[:,0:1]=t_alpha-bin_centers[0].item()
+    # res_gt[:,1:2]=t_alpha-bin_centers[1].item()
+    
+    for idx in range(len(bin_gt)):
+        alpha=t_alpha[idx]
+        
+        
+        #set alpha modulo pi
+        alpha_mod=torch.tensor([alpha,alpha-2*np.pi],device=orient_pred.device)
+        alpha_mod=alpha_mod[torch.min(abs(alpha_mod), 0).indices]
+        res_gt[idx,0]=alpha_mod
+        if abs(alpha_mod)< 105*np.pi/180:
+            bin_gt[idx,0]=1.0
+        
+        
+        alpha=alpha-np.pi
+        #set alpha modulo pi
+        alpha_mod=torch.tensor([alpha,alpha+2*np.pi,alpha-2*np.pi],device=orient_pred.device)
+        alpha_mod=alpha_mod[torch.min(abs(alpha_mod), 0).indices]
+        res_gt[idx,1]=alpha_mod
+        if abs(alpha_mod)< 105*np.pi/180:
+            bin_gt[idx,1]=1.0
+        
+    loss_bin1=torch.nn.functional.cross_entropy(orient_pred[:,0:2],bin_gt[:,0])
+    loss_bin2=torch.nn.functional.cross_entropy(orient_pred[:,4:6],bin_gt[:,1])
+    
+    if bin_gt[:,0].nonzero().shape[0]>0:
+        idx1=bin_gt[:,0].nonzero()[:,0]
+        valid_output1=torch.index_select(orient_pred, 0, idx1)
+        valid_target1=torch.index_select(res_gt, 0, idx1)
+        loss_sin1=torch.nn.functional.smooth_l1_loss(valid_output1[:,2], torch.sin(valid_target1[:,0]))
+        loss_cos1=torch.nn.functional.smooth_l1_loss(valid_output1[:,3], torch.cos(valid_target1[:,0]))
+        loss_res+=loss_sin1+loss_cos1
+    
+    if bin_gt[:,1].nonzero().shape[0]>0:
+        idx2=bin_gt[:,1].nonzero()[:,0]
+        valid_output2=torch.index_select(orient_pred, 0, idx2)
+        valid_target2=torch.index_select(res_gt, 0, idx2)
+        loss_sin2=torch.nn.functional.smooth_l1_loss(valid_output2[:,6], torch.sin(valid_target2[:,1]))
+        loss_cos2=torch.nn.functional.smooth_l1_loss(valid_output2[:,7], torch.cos(valid_target2[:,1]))
+        loss_res+=loss_sin2+loss_cos2
+
+    loss= loss_bin1+loss_bin2+loss_res
+    return loss
