@@ -87,7 +87,7 @@ def print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer
     mloss = (mloss * i + loss_items.cpu().detach()) / (i + 1)  # update mean losses
     loss_scheduler.append(mloss[-1])
     for x in optimizer.param_groups:
-        s = ('%8s%12s' + '%10.3g' * 12) % (
+        s = ('%8s%12s' + '%10.3g' * 13) % (
             '%g/%g' % (epoch, epochs - 1), '%g/%g' % (i, nb - 1), *mloss, len(targets), img_size, x['lr'])
     with open(log_path, 'a') as logfile:
         logfile.write(str(rank)+" "+s+"\n")
@@ -123,8 +123,6 @@ def prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,acc
 
     pixel_to_normalized_resized=pixel_to_normalized_resized.to(device)
     resize_matrix=pixel_to_normalized_resized
-    resize_matrix[:,0,:]*=imgs.shape[2]
-    resize_matrix[:,1,:]*=imgs.shape[3]
     
     imgs = imgs.to(device=device,non_blocking=True)
     input_targets = input_targets.to(device,non_blocking=True)
@@ -212,7 +210,7 @@ def train(
     print(device)
     device_loading= torch.tensor([]).to(device).device
     multi_scale = True
-    available_cpu=12
+    available_cpu=0
 
     print('num_cores_available:',available_cpu)
 
@@ -368,26 +366,9 @@ def train(
 
         pbar = enumerate(dataloader)
         pbar = tqdm(pbar, total=nb)
-        mloss = torch.zeros(9)  # mean losses
+        mloss = torch.zeros(10)  # mean losses
 
         for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi) in pbar:
-            
-        #     if i==0:
-        #         imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,
-        #                                     multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
-        #         imgs=torch.randint(0,255,(opt.batch_size,3,img_size_max*32,img_size_max*32),dtype=torch.float32, device=device)
-        #         imgs/=255.
-                
-        #         with torch.cuda.amp.autocast():
-        #             pred,pred_center,depth_pred,dim_pred,orient_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-        #             loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred, targets, model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
-               
-        #         # Compute gradient
-        #         scaler.scale(loss).backward()
-        #         for param in model.parameters():
-        #             param.grad = None
-                
-                
             
             if len(targets)>0:
                 # if opt.depth_aug:
@@ -436,7 +417,7 @@ def train(
                 mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path,rank)
                 
                 
-                s = ('%10s' * 1 + '%10.4g' * 9) % (
+                s = ('%10s' * 1 + '%10.4g' * 10) % (
                         '%g/%g' % (epoch, epochs - 1), *loss_items)
                 pbar.set_description(s)
             # Accumulate gradient for x batches before optimizing
@@ -469,11 +450,13 @@ def train(
                      model) is nn.parallel.DistributedDataParallel else model.state_dict(),
                  'optimizer': optimizer.state_dict()}
 
-            # Save latest checkpoint
-            torch.save(chkpt, latest)
-            # Calculate mAP (always test final epoch, skip first 5 if opt.nosave)
-            if not opt.notest:
-                results,best_fitness=run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,result_path,best_fitness,epoch,epochs,latest,best)
+
+            if epoch%5:
+                # Save latest checkpoint
+                torch.save(chkpt, latest)
+                # Calculate mAP (always test final epoch, skip first 5 if opt.nosave)
+                if not opt.notest:
+                    results,best_fitness=run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,result_path,best_fitness,epoch,epochs,latest,best)
 
     with open(log_path, 'a') as logfile:
         logfile.write("ending \n")
@@ -505,11 +488,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
     parser.add_argument('--epochs', type=int, default=100, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=15,
+    parser.add_argument('--batch-size', type=int, default=64,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=16, help='number of batches to accumulate before optimizing')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
+    parser.add_argument('--accumulate', type=int, default=4, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/3dcent-COCO.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')

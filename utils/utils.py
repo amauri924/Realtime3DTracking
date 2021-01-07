@@ -279,7 +279,7 @@ def get_depth(pred):
 def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0):  # predictions, targets, model
     calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
-    lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation = ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank)
+    lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation,lloc_cent = ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank)
     txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
 #    with open(str(rank)+'.txt',"a") as f:
 #        f.write("targets"+str(targets)+'\n')
@@ -364,7 +364,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     l_orientation=compute_rot_loss(t_alpha,orient_pred,l_orientation)
 
 #    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
-    rois=targets[:,2:6].clone() # Rois closest to anchors 
+    rois=targets[:,2:6].clone().to(dtype=pdim.dtype) # Rois closest to anchors 
     rois[:,0]*=img_shape[0]
     rois[:,2]*=img_shape[0]
     rois[:,1]*=img_shape[1]
@@ -376,6 +376,9 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     target_cent=targets[:,6:8].clone()
     target_cent[:,0]*=img_shape[0]
     target_cent[:,1]*=img_shape[1]
+
+    target_cent_loc=target_cent.clone()
+    
 
     
     #Preparing the target center
@@ -397,21 +400,23 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     
     ldim += L2loss(pdim,tdim_offsets)*10
     
-    #Give more weight to the loss of the bin closest to the target
 
     ldim += L1loss(pdim_closest,tdim_closest)*100
     
     lcent += L1loss(pcent,target_cent)
     
     ldepth += L1loss(p_depth,gt_depth)
+    
+    l_loc_cent=compute_loc_cent_loss(target_cent_loc,targets[:,0],gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,lloc_cent)
+    
 #    ldepth += L1loss(pred_loc,target_loc)
 #    ldepth/=10
     if not torch.isfinite(ldepth):
         print("err")
-    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation 
+    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation +l_loc_cent
 #    loss=lconf_depth+ldepth
 
-    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation, loss)).detach()
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation,l_loc_cent, loss)).detach()
 
 
 
@@ -927,8 +932,6 @@ def compute_rot_loss(t_alpha,orient_pred,l_orientation):
     res_gt=torch.zeros([t_alpha.shape[0],2],device=orient_pred.device)
     bin_gt=torch.zeros([t_alpha.shape[0],2],device=orient_pred.device).long()
     
-    # res_gt[:,0:1]=t_alpha-bin_centers[0].item()
-    # res_gt[:,1:2]=t_alpha-bin_centers[1].item()
     
     for idx in range(len(bin_gt)):
         alpha=t_alpha[idx]
@@ -971,3 +974,48 @@ def compute_rot_loss(t_alpha,orient_pred,l_orientation):
 
     loss= loss_bin1+loss_bin2+loss_res
     return loss
+
+
+def compute_loc_cent_loss(target_cent,targets_idx,gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,loss):
+    tloc_2d_homo=torch.cat((target_cent,torch.zeros(target_cent.shape[0],1,device=target_cent.device)+1),1).T
+    tloc_2d_homo[0,:]=tloc_2d_homo[0,:]/img_shape[0]
+    tloc_2d_homo[1,:]=tloc_2d_homo[1,:]/img_shape[1]
+    
+    ploc_2d_homo=pcent
+    ploc_2d_homo[:,1]*=rois[:,3]
+    ploc_2d_homo[:,0]*=rois[:,2]
+    ploc_2d_homo=ploc_2d_homo+rois[:,:2]
+    ploc_2d_homo=torch.cat((ploc_2d_homo,torch.zeros(target_cent.shape[0],1,device=target_cent.device,dtype=ploc_2d_homo.dtype)+1),1).T
+    ploc_2d_homo[0,:]=ploc_2d_homo[0,:]/img_shape[0]
+    ploc_2d_homo[1,:]=ploc_2d_homo[1,:]/img_shape[1]
+    
+    
+    for idx in range(resize_matrix.shape[0]):
+        index_select=(targets_idx==idx).nonzero()
+        if index_select.shape[0]!=0:
+            valid_tdepth=torch.index_select(gt_depth, 0, index_select[:,0])
+            valid_pdepth=torch.index_select(p_depth, 0, index_select[:,0])
+            
+            valid_tloc_2d=torch.index_select(tloc_2d_homo, 1, index_select[:,0])
+            valid_ploc_2d=torch.index_select(ploc_2d_homo, 1, index_select[:,0])
+            
+            tloc_pixels=torch.matmul(torch.inverse(resize_matrix[idx,:3,:3]),valid_tloc_2d)
+            ploc_pixels=torch.matmul(torch.inverse(resize_matrix[idx,:3,:3]),valid_ploc_2d)
+            
+            tloc_pixels_homo=torch.cat((tloc_pixels,torch.zeros(1,tloc_pixels.shape[1],device=target_cent.device)+1),0)
+            ploc_pixels_homo=torch.cat((ploc_pixels,torch.zeros(1,ploc_pixels.shape[1],device=target_cent.device)+1),0)
+            
+            tloc_pixels_homo[:3,:]*=valid_tdepth.T*200
+            ploc_pixels_homo[:3,:]*=valid_pdepth.T*200
+            
+            
+            with torch.cuda.amp.autocast(enabled=False):
+                tloc_3d=torch.matmul(torch.inverse(calib[idx]),tloc_pixels_homo)[:3,:]
+                ploc_3d=torch.matmul(torch.inverse(calib[idx]),ploc_pixels_homo)[:3,:]
+            
+            loss+=torch.nn.functional.l1_loss(ploc_3d,tloc_3d)
+    
+    return loss
+
+
+    
