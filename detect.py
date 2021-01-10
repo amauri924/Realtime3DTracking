@@ -44,7 +44,7 @@ def detect(
 
     # Fuse Conv2d + BatchNorm2d layers
 #    model.fuse()
-    with open("data/3dcent-NS/avg_shapes.json","r") as f:
+    with open("data/KITTI/avg_shapes.json","r") as f:
         default_dims=json.load(f)
     default_dims_tensor=torch.zeros(len(default_dims),3,device=device)
     for class_idx in default_dims:
@@ -105,9 +105,7 @@ def detect(
                     with open(save_path + '.txt', 'a') as file:
                         file.write(('%g ' * 6 + '\n') % (*xyxy, cls, conf))
 
-                #get 3d center pixel coord
-                # x=xyxy[0]+centers[j][0]*(xyxy[2]-xyxy[0])
-                # y=xyxy[1]+centers[j][1]*(xyxy[3]-xyxy[1])
+                width,height,length=(default_dims_tensor[int(cls),:] - pred_dim[j,int(cls),:]*200).cpu().numpy()
                 
                 w_bbox=xyxy[2]-xyxy[0]
                 h_bbox=xyxy[3]-xyxy[1]
@@ -121,14 +119,15 @@ def detect(
                 homo_center=np.array([[x*depth],[y*depth],[depth],[1]])
                 center_3d=np.linalg.inv(calib) @ homo_center
                 
+                # center_3d[1][0]-=height/2
+                
                 alpha=p_alpha[j] if p_alpha[j]>0 else p_alpha[j]+2*np.pi
                 
                 
                 theta=alpha+math.atan2(center_3d[0][0],center_3d[2][0])
                 
                 
-                width,height,length=(default_dims_tensor[int(cls),:] - pred_dim[j,int(cls),:]*200).cpu().numpy()
-                model_size=pred_dim
+
                 
                 K_model_to_cam=np.array([[-np.sin(theta),0,np.cos(theta),center_3d[0][0]],
                                          [0,1,0,center_3d[1][0]],
@@ -240,10 +239,10 @@ def detect(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent-COCO.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/CRIANN/latest.pt', help='path to weights file')
-    parser.add_argument('--images', type=str, default='data/3dcent-NS/test.txt', help='path to images')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
+    parser.add_argument('--weights', type=str, default='weights/best.pt', help='path to weights file')
+    parser.add_argument('--images', type=str, default='data/KITTI/val.txt', help='path to images')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.6, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.2, help='iou threshold for non-maximum suppression')

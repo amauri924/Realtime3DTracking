@@ -209,8 +209,8 @@ def train(
     device = rank
     print(device)
     device_loading= torch.tensor([]).to(device).device
-    multi_scale = True
-    available_cpu=0
+    multi_scale = False
+    available_cpu=12
 
     print('num_cores_available:',available_cpu)
 
@@ -232,8 +232,9 @@ def train(
     model = Model(cfg,hyp,transfer=False).to(device)
 
     # Optimizer
+    # optimizer=optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=1e-3, momentum=0.9, weight_decay=5e-4)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
-                           lr=1e-4,  weight_decay=3e-5, amsgrad=True)
+                            lr=1e-4,  weight_decay=3e-5, amsgrad=True)
     scaler = torch.cuda.amp.GradScaler()
     
     cutoff = -1  # backbone reaches to cutoff layer
@@ -266,10 +267,10 @@ def train(
         if chkpt['optimizer'] is not None:
             if opt.resume:
                 optimizer.load_state_dict(chkpt['optimizer'])
-                try:
-                    best_fitness = chkpt['best_fitness']
-                except:
-                    best_fitness = 1e6
+                # try:
+                #     best_fitness = chkpt['best_fitness']
+                # except:
+                #     best_fitness = 1e6
                     
         try:
             if chkpt['training_results'] is not None:
@@ -316,7 +317,9 @@ def train(
 
     scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate)+1)
     scheduler.last_epoch = start_epoch - 1
-
+    if start_epoch!=0:
+        for k in range((int(len(dataloader)/accumulate)+1)*start_epoch):
+            scheduler.step()
 
 
     # Initialize distributed training
@@ -341,13 +344,13 @@ def train(
     with open(log_path, 'a') as logfile:
         logfile.write(str(rank)+" "+"nb epochs : %i\n"%epochs)
         
-    with open("data/3dcent-NS/avg_shapes.json","r") as f:
+    with open("data/KITTI/avg_shapes.json","r") as f:
         default_dims=json.load(f)
     default_dims_tensor=torch.zeros(len(default_dims),3,device=device)
     for class_idx in default_dims:
         default_dims_tensor[int(class_idx),:]=torch.tensor([shape for shape in default_dims[class_idx]])
     
-    
+    torch.backends.cudnn.enabled = True
     for epoch in range(start_epoch, epochs):
         if epoch < 20:
             opt.notest = True
@@ -413,7 +416,7 @@ def train(
                 # rel_err_batch=np.mean(np.array(rel_err_batch))
                 
 
-                
+                del loss,pred,pred_center,depth_pred,dim_pred,orient_pred
                 mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path,rank)
                 
                 
@@ -451,12 +454,12 @@ def train(
                  'optimizer': optimizer.state_dict()}
 
 
-            if epoch%5:
+            if epoch%10==0:
                 # Save latest checkpoint
                 torch.save(chkpt, latest)
                 # Calculate mAP (always test final epoch, skip first 5 if opt.nosave)
-                if not opt.notest:
-                    results,best_fitness=run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,result_path,best_fitness,epoch,epochs,latest,best)
+            if not opt.notest and epoch%1==0:
+                results,best_fitness=run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,result_path,best_fitness,epoch,epochs,latest,best)
 
     with open(log_path, 'a') as logfile:
         logfile.write("ending \n")
@@ -487,16 +490,16 @@ def example(rank, world_size,opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=100, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=64,
+    parser.add_argument('--epochs', type=int, default=500, help='number of epochs')
+    parser.add_argument('--batch-size', type=int, default=12,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=4, help='number of batches to accumulate before optimizing')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent-COCO.data', help='coco.data file path')
+    parser.add_argument('--accumulate', type=int, default=21, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
-    parser.add_argument('--resume', default=False, help='resume training flag')
+    parser.add_argument('--resume', default=True, help='resume training flag')
     parser.add_argument('--depth_aug', default=True, help='resume training flag')
     parser.add_argument('--transfer', default=True, help='transfer learning flag')
     parser.add_argument('--num-workers', type=int, default=7, help='number of Pytorch DataLoader workers')

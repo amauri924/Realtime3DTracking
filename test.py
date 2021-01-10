@@ -290,7 +290,7 @@ def test(
     orient_abs_err_dict={}
     depth_abs_err_dict={}
     orient_abs_err=[]
-    with open("data/3dcent-NS/avg_shapes.json","r") as f:
+    with open("data/KITTI/avg_shapes.json","r") as f:
         default_dims=json.load(f)
     default_dims_tensor=torch.zeros(len(default_dims),3,device=device)
     for class_idx in default_dims:
@@ -319,9 +319,9 @@ def test(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
     parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
-    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-NS.cfg', help='cfg file path')
-    parser.add_argument('--data-cfg', type=str, default='data/3dcent-NS.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/L1_smooth/latest.pt', help='path to weights file')
+    parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
+    parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
+    parser.add_argument('--weights', type=str, default='weights/latest.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.6, help='iou threshold for non-maximum suppression')
