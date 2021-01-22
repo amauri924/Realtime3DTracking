@@ -489,19 +489,22 @@ class orient_pred(nn.Module):
         self.nc=nc
         self.num_channel=num_channel
 #        self.dep = nn.Sequential(
-        self.conv1=nn.Conv2d(num_channel, num_channel*2,
+        self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
-        self.bn1=nn.BatchNorm2d(num_channel*2)
+        self.bn1=nn.BatchNorm2d(num_channel)
         self.relu=nn.ReLU(inplace=True)
-        self.conv2=nn.Conv2d(num_channel*2, num_channel,
+        self.conv2=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn2=nn.BatchNorm2d(num_channel)
 
-        self.conv3=nn.Conv2d(num_channel, num_channel*2,
+        self.conv3=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
-        self.bn3=nn.BatchNorm2d(num_channel*2)
-        self.conv4=nn.Conv2d(num_channel*2, 8, kernel_size=1,
+        self.bn3=nn.BatchNorm2d(num_channel)
+        self.conv4=nn.Conv2d(num_channel, 8, kernel_size=1,
                   stride=1, padding=0, bias=True)
+        self.conv4=nn.Conv2d(num_channel, 8, kernel_size=1,
+                  stride=1, padding=0, bias=True)
+        self.fc=nn.Linear(1024 * 9, 4)
 
 
 
@@ -511,12 +514,54 @@ class orient_pred(nn.Module):
         x=self.relu(x)
         x=self.conv2(x)
         x=self.bn2(x)
-        x=self.conv3(x)
-        if x.shape[0]>1:
-            x=self.bn3(x)
-        x=self.conv4(x)
+        # x=self.conv3(x)
+        # if x.shape[0]>1:
+        #     x=self.bn3(x)
+        x=x.view(-1,1024 * 9)
+        x=self.fc(x)
+        # x=self.conv4(x)
         return x
 
+
+class orient_class_pred(nn.Module):
+    
+    def __init__(self,nc,num_channel):
+        super(orient_class_pred, self).__init__()
+        self.nc=nc
+        self.num_channel=num_channel
+#        self.dep = nn.Sequential(
+        self.conv1=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn1=nn.BatchNorm2d(num_channel)
+        self.relu=nn.ReLU(inplace=True)
+        self.conv2=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn2=nn.BatchNorm2d(num_channel)
+
+        self.conv3=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn3=nn.BatchNorm2d(num_channel)
+        self.conv4=nn.Conv2d(num_channel, 8, kernel_size=1,
+                  stride=1, padding=0, bias=True)
+        self.conv4=nn.Conv2d(num_channel, 8, kernel_size=1,
+                  stride=1, padding=0, bias=True)
+        self.fc=nn.Linear(1024 * 9, 4)
+
+
+
+    def forward(self,x):
+        x=self.conv1(x)
+        x=self.bn1(x)
+        x=self.relu(x)
+        x=self.conv2(x)
+        x=self.bn2(x)
+        # x=self.conv3(x)
+        # if x.shape[0]>1:
+        #     x=self.bn3(x)
+        x=x.view(-1,1024*9)
+        x=self.fc(x)
+        # x=self.conv4(x)
+        return x
 
 
 class Model(nn.Module):
@@ -535,6 +580,7 @@ class Model(nn.Module):
         self.orientation_prediction=orient_pred(self.nc,self.num_channel)
         self.transfer=transfer
         self.hyp=hyp
+        self.bin_pred=orient_class_pred(self.nc,self.num_channel)
         
 
 
@@ -567,7 +613,14 @@ class Model(nn.Module):
             dimension_pred=self.dimension_prediction(pooled_features)/100
             
             #Compute orientation
-            orientation_pred=self.orientation_prediction(pooled_features).flatten(start_dim=1)
+            orientation_regression=self.orientation_prediction(pooled_features)
+            orient_bin_pred=self.bin_pred(pooled_features)
+            
+            orientation_pred=torch.cat((torch.index_select(orient_bin_pred, 1, torch.cuda.LongTensor([0,1])),
+                                        torch.index_select(orientation_regression, 1, torch.cuda.LongTensor([0,1])),
+                                        torch.index_select(orient_bin_pred, 1, torch.cuda.LongTensor([2,3])),
+                                        torch.index_select(orientation_regression, 1, torch.cuda.LongTensor([2,3]))),dim=1)
+            
             divider1=torch.sqrt(orientation_pred[:,2:3]**2+orientation_pred[:,3:4]**2)
             b1sin=orientation_pred[:,2:3]/divider1
             b1cos=orientation_pred[:,3:4]/divider1
@@ -583,7 +636,6 @@ class Model(nn.Module):
             return rois,center_pred,depth_pred,dimension_pred,rotation
         
         elif detect:
-            _,_,width,_=x.shape
             _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
             io=[]
             for line in io_orig:
@@ -597,16 +649,20 @@ class Model(nn.Module):
                     continue
             
             device_id=int(str(x.device)[-1])
-            roi=[ torch.clamp(bbox[:,:4],min=0,max=width) for bbox in rois]
-                
-                # rois[:][:,:4]]
+            roi=[rois[0][:,:4]]
             pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/32.0)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
             
             #Compute orientation
-            orientation_pred=self.orientation_prediction(pooled_features).flatten(start_dim=1)
+            orientation_regression=self.orientation_prediction(pooled_features)
+            orient_bin_pred=self.bin_pred(pooled_features)
+            
+            orientation_pred=torch.cat((torch.index_select(orient_bin_pred, 1, torch.cuda.LongTensor([0,1])),
+                                        torch.index_select(orientation_regression, 1, torch.cuda.LongTensor([0,1])),
+                                        torch.index_select(orient_bin_pred, 1, torch.cuda.LongTensor([2,3])),
+                                        torch.index_select(orientation_regression, 1, torch.cuda.LongTensor([2,3]))),dim=1)
             divider1=torch.sqrt(orientation_pred[:,2:3]**2+orientation_pred[:,3:4]**2)
             b1sin=orientation_pred[:,2:3]/divider1
             b1cos=orientation_pred[:,3:4]/divider1
@@ -633,8 +689,14 @@ class Model(nn.Module):
             dimension_pred=self.dimension_prediction(pooled_features)/100
             
             #Compute orientation
-            orientation_pred=self.orientation_prediction(pooled_features).flatten(start_dim=1)
-            divider1=torch.sqrt(orientation_pred[:,2:3]**2+orientation_pred[:,3:4]**2)
+            orientation_regression=self.orientation_prediction(pooled_features)
+            orient_bin_pred=self.bin_pred(pooled_features)
+            
+            orientation_pred=torch.cat((torch.index_select(orient_bin_pred, 1, torch.cuda.LongTensor([0,1])),
+                                        torch.index_select(orientation_regression, 1, torch.cuda.LongTensor([0,1])),
+                                        torch.index_select(orient_bin_pred, 1, torch.cuda.LongTensor([2,3])),
+                                        torch.index_select(orientation_regression, 1, torch.cuda.LongTensor([2,3]))),dim=1)
+            divider1=torch.sqrt(orientation_pred[:,2:3]*orientation_pred[:,2:3]+orientation_pred[:,3:4]*orientation_pred[:,3:4])
             b1sin=orientation_pred[:,2:3]/divider1
             b1cos=orientation_pred[:,3:4]/divider1
             

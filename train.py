@@ -230,7 +230,9 @@ def train(
 
     # Initialize model
     model = Model(cfg,hyp,transfer=False).to(device)
-
+   
+    # for param in model.Yolov3.parameters():
+    #     param.requires_grad = False
     # Optimizer
     # optimizer=optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=1e-3, momentum=0.9, weight_decay=5e-4)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
@@ -267,10 +269,10 @@ def train(
         if chkpt['optimizer'] is not None:
             if opt.resume:
                 optimizer.load_state_dict(chkpt['optimizer'])
-                # try:
-                #     best_fitness = chkpt['best_fitness']
-                # except:
-                #     best_fitness = 1e6
+                try:
+                    best_fitness = chkpt['best_fitness']
+                except:
+                    best_fitness = 1e6
                     
         try:
             if chkpt['training_results'] is not None:
@@ -295,7 +297,7 @@ def train(
     dataset = LoadImagesAndLabels(train_path,
                                   img_size,
                                   batch_size,
-                                  augment=True,
+                                  augment=False,
                                   rect=opt.rect,
                                   depth_aug=opt.depth_aug)  # rectangular training
 
@@ -315,11 +317,11 @@ def train(
                             sampler=train_sampler)
 
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate)+1)
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 5e-3, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate)+1,pct_start=0.05)
     scheduler.last_epoch = start_epoch - 1
-    if start_epoch!=0:
-        for k in range((int(len(dataloader)/accumulate)+1)*start_epoch):
-            scheduler.step()
+    # if start_epoch!=0:
+    #     for k in range((int(len(dataloader)/accumulate)+1)*start_epoch):
+    #         scheduler.step()
 
 
     # Initialize distributed training
@@ -352,13 +354,14 @@ def train(
     
     torch.backends.cudnn.enabled = True
     for epoch in range(start_epoch, epochs):
-        if epoch < 20:
+        if epoch < 4:
             opt.notest = True
         else:
             opt.notest = False
         
         loss_scheduler=[]
         model.train()
+        # model.Yolov3.eval()
         rel_err=[]
         #set new learning rate
 #        for param_group in optimizer.param_groups:
@@ -490,17 +493,17 @@ def example(rank, world_size,opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=500, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=12,
+    parser.add_argument('--epochs', type=int, default=1000, help='number of epochs')
+    parser.add_argument('--batch-size', type=int, default=8,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=21, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=1, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
-    parser.add_argument('--resume', default=True, help='resume training flag')
-    parser.add_argument('--depth_aug', default=True, help='resume training flag')
+    parser.add_argument('--resume', default=False, help='resume training flag')
+    parser.add_argument('--depth_aug', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=True, help='transfer learning flag')
     parser.add_argument('--num-workers', type=int, default=7, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')

@@ -8,8 +8,8 @@ Created on Mon Sep 14 09:40:29 2020
 
 import os
 
-file_path="data/3dcent-NS/train.txt"
-dir_criann="/app/media/antoine/NVMe/data-NuScenes/"
+file_path="data/KITTI/val.txt"
+dir_criann="/save/2020010/amauri03/KITTI/"
 
 with open(file_path,'r') as f:
     files=[file.split('\n')[0] for file in f.readlines()]

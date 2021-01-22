@@ -389,34 +389,38 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
 
     
     
-    lxy *= (k * h['giou']) / nt
-    lwh *= (k * h['wh']) / nt
-    lcls *= (k * h['cls']) / (nt * nc)
-    lobj *= (k * h['obj']) / ng
+
     
     
 
 
     
-    ldim += L2loss(pdim,tdim_offsets)*10
+    # ldim += L2loss(pdim,tdim_offsets)*10
     
 
-    ldim += L1loss(pdim_closest,tdim_closest)*100
+    ldim += L1loss(pdim_closest,tdim_closest)
     
     lcent += L1loss(pcent,target_cent)
     
     ldepth += L1loss(p_depth,gt_depth)
     
-    l_loc_cent=compute_loc_cent_loss(target_cent_loc,targets[:,0],gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,lloc_cent)
+    lloc_cent+=compute_loc_cent_loss(target_cent_loc,targets[:,0],gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,lloc_cent)
     
-#    ldepth += L1loss(pred_loc,target_loc)
-#    ldepth/=10
-    if not torch.isfinite(ldepth):
-        print("err")
-    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation +l_loc_cent
+    lxy *= (k * h['giou']) / nt
+    lwh *= (k * h['wh']) / nt
+    lcls *= (k * h['cls']) / (nt * nc)
+    lobj *= (k * h['obj']) / ng
+    
+    lcent*=(k*400)/nt
+    ldepth*=(k*500)/nt
+    ldim*=(k*700)/nt
+    l_orientation*=(k*64)/nt
+    lloc_cent*=(k)/nt
+    
+    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation +lloc_cent
 #    loss=lconf_depth+ldepth
 
-    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation,l_loc_cent, loss)).detach()
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation,lloc_cent, loss)).detach()
 
 
 
@@ -934,25 +938,26 @@ def compute_rot_loss(t_alpha,orient_pred,l_orientation):
     
     
     for idx in range(len(bin_gt)):
-        alpha=t_alpha[idx]
+        alpha=t_alpha[idx]+1/2*np.pi
         
         
         #set alpha modulo pi
-        alpha_mod=torch.tensor([alpha,alpha-2*np.pi],device=orient_pred.device)
+        alpha_mod=torch.tensor([alpha,alpha+2*np.pi,alpha-2*np.pi],device=orient_pred.device)
         alpha_mod=alpha_mod[torch.min(abs(alpha_mod), 0).indices]
         res_gt[idx,0]=alpha_mod
-        if abs(alpha_mod)< 105*np.pi/180:
+        if abs(alpha_mod)< 120*np.pi/180:
             bin_gt[idx,0]=1.0
         
         
-        alpha=alpha-np.pi
+        alpha=t_alpha[idx]-1/2*np.pi
         #set alpha modulo pi
         alpha_mod=torch.tensor([alpha,alpha+2*np.pi,alpha-2*np.pi],device=orient_pred.device)
         alpha_mod=alpha_mod[torch.min(abs(alpha_mod), 0).indices]
         res_gt[idx,1]=alpha_mod
         if abs(alpha_mod)< 105*np.pi/180:
             bin_gt[idx,1]=1.0
-        
+        if bin_gt[idx,1]==0 and  bin_gt[idx,0]==0:
+            print("louche")
     loss_bin1=torch.nn.functional.cross_entropy(orient_pred[:,0:2],bin_gt[:,0])
     loss_bin2=torch.nn.functional.cross_entropy(orient_pred[:,4:6],bin_gt[:,1])
     
@@ -1013,7 +1018,7 @@ def compute_loc_cent_loss(target_cent,targets_idx,gt_depth,rois,img_shape,resize
                 tloc_3d=torch.matmul(torch.inverse(calib[idx]),tloc_pixels_homo)[:3,:]
                 ploc_3d=torch.matmul(torch.inverse(calib[idx]),ploc_pixels_homo)[:3,:]
             
-            loss+=torch.nn.functional.l1_loss(ploc_3d,tloc_3d)
+            loss+=torch.nn.functional.l1_loss(ploc_3d,tloc_3d)/10
     
     return loss
 

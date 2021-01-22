@@ -69,7 +69,7 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=2):
 
 
 
-data_cfg ='data/3dcent-NS.data'
+data_cfg ='data/KITTI.data'
 multi_scale=True
 img_size=512
 if multi_scale:
@@ -94,9 +94,9 @@ batch_size=16
 dataset = LoadImagesAndLabels_display(train_path,
                               1280,
                               batch_size,
-                              augment=True,
+                              augment=False,
                               rect=False,
-                              depth_aug=True)  # rectangular training
+                              depth_aug=False)  # rectangular training
 
 
 train_sampler = torch.utils.data.distributed.DistributedSampler(dataset,
@@ -107,7 +107,7 @@ train_sampler = torch.utils.data.distributed.DistributedSampler(dataset,
 
 dataloader = DataLoader(dataset,
                         batch_size=batch_size,
-                        num_workers=0,
+                        num_workers=12,
                         shuffle=False,  # Shuffle=True unless rectangular training is used
                         pin_memory=True,
                         collate_fn=dataset.collate_fn,
@@ -159,5 +159,5 @@ for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi)
                     except:
                         print("eh")
     
-    if i==100:
-        break
+    # if i==100:
+    #     break

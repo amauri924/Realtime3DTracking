@@ -91,9 +91,25 @@ def compute_classification_orient(t_alpha,orient_pred):
 
 
 def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,center_abs_err,depth_abs_err,dim_abs_err,
-                                    orient_abs_err,targets,img_shape,default_dims_tensor,dim_abs_err_dict,orient_abs_err_dict,depth_abs_err_dict,
-                                    bin_pred_error_list):
+                                    orient_abs_err,targets_,img_shape,default_dims_tensor,dim_abs_err_dict,orient_abs_err_dict,depth_abs_err_dict,
+                                    bin_pred_error_list,associated):
         # Statistics per image
+        indxs_target=torch.tensor([idx[0] for idx in associated],device=targets_.device)
+        indxs_pred=torch.tensor([idx[1] for idx in associated],device=depth_pred.device)
+        
+        print(indxs_target)
+        print(indxs_pred)
+        
+        print(len(targets))
+        print(len(center_pred))
+        
+        targets=torch.index_select(targets_,0,indxs_target)
+        
+        center_pred=torch.index_select(center_pred,0,indxs_pred)
+        depth_pred=torch.index_select(depth_pred,0,indxs_pred)
+        pred_dim=torch.index_select(pred_dim,0,indxs_pred)
+        orient_pred=torch.index_select(orient_pred,0,indxs_pred)
+        
         labels=targets[:,1:]
         tcls=labels[:,0]
         width,height=img_shape
@@ -229,6 +245,9 @@ def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err
     return (mp, mr, map, mf1, center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err), maps
 
 def compute_bbox_error(output,targets,stats,width,height,iou_thres,seen):
+    associated=[]
+    len_target=0
+    len_pred=0
     for si, pred in enumerate(output):
             labels = targets[targets[:, 0] == si, 1:]
             nl = len(labels)
@@ -269,10 +288,17 @@ def compute_bbox_error(output,targets,stats,width,height,iou_thres,seen):
                     if iou > iou_thres and m[bi] not in [ind[1] for ind in detected]:  # and pcls == tcls[bi]:
                         correct[i] = 1
                         detected.append((i,m[bi].cpu().item()))
-                
+                        
+
+                        associated.append((bi.cpu().item()+len_target,i+len_pred))
+
+            len_target+=len(labels)
+            len_pred+=len(output[si])
+            
+            
             # Append statistics (correct, conf, pcls, tcls)
             stats.append((correct, pred[:, 4].cpu(), pred[:, 6].cpu(), tcls))
-    return stats,seen
+    return stats,seen,associated
 
 def test(
         cfg,
@@ -355,14 +381,15 @@ def test(
             continue
         input_targets,width,height,imgs,targets=prepare_data_for_foward_pass(targets,device,imgs)
         with torch.cuda.amp.autocast():
-            output_roi,center_pred, depth_pred ,pred_dim,orient_pred= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,testing=True,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])  # inference and training outputs
+            output_roi,center_pred, depth_pred ,pred_dim,orient_pred= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,detect=True)  # inference and training outputs
 
+        stats,seen,associated=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)
         center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict, orient_abs_err_dict, depth_abs_err_dict,bin_pred_error_list=compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,
-                                                                                                orient_pred,center_abs_err,depth_abs_err,
-                                                                                                dim_abs_err,orient_abs_err,targets,(width,height),
-                                                                                                default_dims_tensor,dim_abs_err_dict, orient_abs_err_dict,
-                                                                                                depth_abs_err_dict,bin_pred_error_list)
-        stats,seen=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)
+                                                                        orient_pred,center_abs_err,depth_abs_err,
+                                                                        dim_abs_err,orient_abs_err,targets,(width,height),
+                                                                        default_dims_tensor,dim_abs_err_dict, orient_abs_err_dict,
+                                                                        depth_abs_err_dict,bin_pred_error_list,associated)
+
     (mp, mr, map, mf1, center_abs_err,
      depth_abs_err,dim_abs_err,orient_abs_err), maps=compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,
                                                                                    dim_abs_err,orient_abs_err,dim_abs_err_dict,
@@ -375,10 +402,10 @@ def test(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--batch-size', type=int, default=10, help='size of each image batch')
+    parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best.pt', help='path to weights file')
+    parser.add_argument('--weights', type=str, default='weights/latest.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.6, help='iou threshold for non-maximum suppression')
