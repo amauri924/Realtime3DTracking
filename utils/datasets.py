@@ -342,7 +342,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # Augment image and labels
         if self.augment:
             img, labels = random_affine(img, labels, degrees=(-5, 5), translate=(0.10, 0.10), scale=(0.90, 1.10))
-
+        
+        if len(labels):
+            idxs_to_keep=((labels[:,5]>labels[:,0]) * (labels[:,5]<labels[:,3]) * (labels[:,6]>labels[:,1]) * (labels[:,6]<labels[:,4])).nonzero()[0]
+    
+            labels=labels[idxs_to_keep,:]
+        
         nL = len(labels)  # number of labels
         if nL:
             # convert xyxy to xywh
@@ -384,8 +389,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img = np.ascontiguousarray(img, dtype=np.float32)  # uint8 to float32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         
-        if random.random() > 0.5 and self.depth_aug:
-            augmented_roi=rois_augmentation_for_depth(labels_out,0.03,0.02)
+        if random.random() > 0.2 and self.depth_aug:
+            augmented_roi=rois_augmentation_for_depth(labels_out,0.5,0)
         else:
             augmented_roi=labels_out.clone()
 
@@ -588,6 +593,10 @@ class LoadImagesAndLabels_display(Dataset):  # for training/testing
         # Augment image and labels
         if self.augment:
             img, labels = random_affine(img, labels, degrees=(-5, 5), translate=(0.10, 0.10), scale=(0.90, 1.10))
+        
+        idxs_to_keep=((labels[:,5]>labels[:,0]) * (labels[:,5]<labels[:,3]) * (labels[:,6]>labels[:,1]) * (labels[:,6]<labels[:,4])).nonzero()[0]
+
+        labels=labels[idxs_to_keep,:]
 
         nL = len(labels)  # number of labels
         if nL:
@@ -630,8 +639,8 @@ class LoadImagesAndLabels_display(Dataset):  # for training/testing
         img = np.ascontiguousarray(img, dtype=np.uint8)  # uint8 to float32
         # img /= 255.0  # 0 - 255 to 0.0 - 1.0
         
-        if random.random() > 0.5 and self.depth_aug:
-            augmented_roi=rois_augmentation_for_depth(labels_out,0.05,0.02)
+        if random.random() > 0 and self.depth_aug:
+            augmented_roi=rois_augmentation_for_depth(labels_out,0.5,0)
         else:
             augmented_roi=labels_out.clone()
 
@@ -795,14 +804,14 @@ def rois_augmentation_for_depth(targets,sigma_shape,sigma_center):
         y_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
         x1=(new_targets[i,2]+x_var*new_targets[i,2])-(new_targets[i,4]+w_var*new_targets[i,4])/2
         x2=(new_targets[i,2]+x_var*new_targets[i,2])+(new_targets[i,4]+w_var*new_targets[i,4])/2
-        y1=(new_targets[i,3]+x_var*new_targets[i,3])-(new_targets[i,5]+w_var*new_targets[i,5])/2
-        y2=(new_targets[i,3]+x_var*new_targets[i,3])+(new_targets[i,5]+w_var*new_targets[i,5])/2
+        y1=(new_targets[i,3]+y_var*new_targets[i,3])-(new_targets[i,5]+h_var*new_targets[i,5])/2
+        y2=(new_targets[i,3]+y_var*new_targets[i,3])+(new_targets[i,5]+h_var*new_targets[i,5])/2
         
         if min(x1,x2)>=0 and max(x1,x2)<=1:
-            new_targets[i,2]+=x_var
+            new_targets[i,2]+=x_var*new_targets[i,2]
             new_targets[i,4]+=w_var*new_targets[i,4]
         
         if min(y1,y2)>=0 and max(y1,y2)<=1:
-            new_targets[i,3]+=y_var
+            new_targets[i,3]+=y_var*new_targets[i,3]
             new_targets[i,5]+=h_var*new_targets[i,5]
     return new_targets

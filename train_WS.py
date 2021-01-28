@@ -8,8 +8,8 @@ from torch.utils.data import DataLoader
 import torch
 import math
 from tqdm import tqdm
-import test_roi as test
-from models import *
+import test_WS as test
+from models_WS import *
 from utils.datasets import *
 from utils.utils import *
 import sys
@@ -416,7 +416,7 @@ def train(
                 # rel_err_batch=np.mean(np.array(rel_err_batch))
                 
 
-                del pred,pred_center,depth_pred,dim_pred,orient_pred
+                del loss,pred,pred_center,depth_pred,dim_pred,orient_pred
                 mloss,loss_scheduler,s=print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer,nb,targets,img_size,log_path,rank)
                 
                 
@@ -491,9 +491,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
     parser.add_argument('--epochs', type=int, default=720, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=2,
+    parser.add_argument('--batch-size', type=int, default=4,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=128, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=64, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')

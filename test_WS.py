@@ -3,7 +3,7 @@ import argparse
 
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from models import *
+from models_WS import *
 from utils.datasets import *
 from utils.utils import *
 import math
@@ -121,18 +121,18 @@ def store_all_depths(depth_pred,targets,store_dict,associated):
     depth_pred=torch.index_select(depth_pred,0,indxs_pred)
     tcls=targets_selected[:,1]
     tdepth=targets_selected[:,8]
-    
-    num_cls=int(torch.max(tcls).cpu().item())
-    
-    for i in range(num_cls+1):
-        idx_cls=(tcls==i).nonzero()[:,0]
-        class_tdepth=torch.index_select(tdepth,0,idx_cls.T)
-        class_pdepth=torch.index_select(depth_pred,0,idx_cls.T)
-        try:
-            store_dict[i][0]+= list(class_pdepth.cpu().numpy().T[0,:])
-            store_dict[i][1]+= list(class_tdepth.cpu().numpy())
-        except:
-            store_dict[i]=[list(class_pdepth.cpu().numpy().T[0,:]),list(class_tdepth.cpu().numpy())]
+    if len(tcls)>0:
+        num_cls=int(torch.max(tcls).cpu().item())
+        
+        for i in range(num_cls+1):
+            idx_cls=(tcls==i).nonzero()[:,0]
+            class_tdepth=torch.index_select(tdepth,0,idx_cls.T)
+            class_pdepth=torch.index_select(depth_pred,0,idx_cls.T)
+            try:
+                store_dict[i][0]+= list(class_pdepth.cpu().numpy().T[0,:])
+                store_dict[i][1]+= list(class_tdepth.cpu().numpy())
+            except:
+                store_dict[i]=[list(class_pdepth.cpu().numpy().T[0,:]),list(class_tdepth.cpu().numpy())]
 
     return store_dict
 
@@ -272,9 +272,15 @@ def compute_mean_errors_and_print(stats,center_abs_err,depth_abs_err,dim_abs_err
     # Print results per class
     if nc > 1 and len(stats):
         for i, c in enumerate(ap_class):
-            print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])), np.mean(np.array(depth_abs_err_dict[c])) ))
+            try:
+                print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])), np.mean(np.array(depth_abs_err_dict[c])) ))
+            except:
+                print(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], 0, 0, 0 ))
             with open("output.txt","a") as f:
-                f.write(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])), np.mean(np.array(depth_abs_err_dict[c])) )+'\n')
+                try:
+                    f.write(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], np.mean(np.array(dim_abs_err_dict[c])), np.mean(np.array(orient_abs_err_dict[c])), np.mean(np.array(depth_abs_err_dict[c])) )+'\n')
+                except:
+                    f.write(pf % (names[c], seen, nt[c], p[i], r[i], ap[i], f1[i], 0, 0, 0 )+'\n')
 
 
     # Return results
@@ -381,7 +387,7 @@ def test(
     nc = int(data_cfg['classes'])  # number of classes
     test_path = data_cfg['valid']  # path to test images
     names = load_classes(data_cfg['names'])  # class names
-    available_cpu=len(os.sched_getaffinity(0))
+    available_cpu=0
 
 
     # Dataloader
@@ -472,7 +478,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/KITTI/Adam/run_6/best.pt', help='path to weights file')
+    parser.add_argument('--weights', type=str, default='weights/latest.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.6, help='iou threshold for non-maximum suppression')

@@ -94,9 +94,9 @@ batch_size=16
 dataset = LoadImagesAndLabels_display(train_path,
                               1280,
                               batch_size,
-                              augment=False,
+                              augment=True,
                               rect=False,
-                              depth_aug=False)  # rectangular training
+                              depth_aug=True)  # rectangular training
 
 
 train_sampler = torch.utils.data.distributed.DistributedSampler(dataset,
@@ -138,6 +138,7 @@ for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi)
                 
                 rois=valid_targets[:,np.array([2, 3,4,5 ])].numpy()
                 for k,roi in enumerate(rois):
+                    x,y=valid_targets[k,6:8].numpy()* imgs.shape[1]
                     alpha=valid_targets[k,13:14].clone()*360
                     alpha=alpha.item()
                     obj_class=int(valid_targets[k,1].item())
@@ -150,7 +151,7 @@ for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi)
                         angle_dir="270/"
                     if alpha<=360 and alpha >= 270:
                         angle_dir="360/"
-                    
+                    cv2.circle(img,(round(x),round(y)),5,(0,0,255),3)
                     roi[roi<0]=0
                     label=angle_dir + str(obj_class) + '_' + str(round(alpha))+".png"
                     cropped_img=img[round(roi[1]):round(roi[3]),round(roi[0]):round(roi[2])]

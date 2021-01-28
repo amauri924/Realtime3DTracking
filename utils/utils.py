@@ -361,7 +361,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     
     
     t_alpha=targets[:,13:14].clone()
-    l_orientation=compute_rot_loss(t_alpha,orient_pred,l_orientation)
+    l_orientation=compute_rot_loss(t_alpha,orient_pred,l_orientation)*100
 
 #    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
     rois=targets[:,2:6].clone().to(dtype=pdim.dtype) # Rois closest to anchors 
@@ -386,37 +386,36 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_
     target_cent[:,0]/=rois[:,2]
     target_cent[:,1]/=rois[:,3]
     
-
-    
-    
-
-    
+    ldim += L2loss(pdim,tdim_offsets)*10
     
 
-
-    
-    # ldim += L2loss(pdim,tdim_offsets)*10
-    
-
-    ldim += L1loss(pdim_closest,tdim_closest)
+    ldim += L1loss(pdim_closest,tdim_closest)*100
     
     lcent += L1loss(pcent,target_cent)
     
-    ldepth += L1loss(p_depth,gt_depth)
+    ldepth += L1loss(p_depth*200,gt_depth*200)
     
     lloc_cent+=compute_loc_cent_loss(target_cent_loc,targets[:,0],gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,lloc_cent)
+    
     
     lxy *= (k * h['giou']) / nt
     lwh *= (k * h['wh']) / nt
     lcls *= (k * h['cls']) / (nt * nc)
     lobj *= (k * h['obj']) / ng
+    ldim *= bs/64
+    lcent *= bs/64
+    ldepth *= bs/64
+    lloc_cent *= bs/64
+    l_orientation *= bs/64
+
+
     
-    lcent*=(k*400)/nt
-    ldepth*=(k*500)/nt
-    ldim*=(k*700)/nt
-    l_orientation*=(k*64)/nt
-    lloc_cent*=(k)/nt
+
     
+#    ldepth += L1loss(pred_loc,target_loc)
+#    ldepth/=10
+    if not torch.isfinite(ldepth):
+        print("err")
     loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation +lloc_cent
 #    loss=lconf_depth+ldepth
 
@@ -979,7 +978,6 @@ def compute_rot_loss(t_alpha,orient_pred,l_orientation):
 
     loss= loss_bin1+loss_bin2+loss_res
     return loss
-
 
 def compute_loc_cent_loss(target_cent,targets_idx,gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,loss):
     tloc_2d_homo=torch.cat((target_cent,torch.zeros(target_cent.shape[0],1,device=target_cent.device)+1),1).T
