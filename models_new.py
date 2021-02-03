@@ -298,18 +298,18 @@ class Depth_Layer(nn.Module):
         super(Depth_Layer, self).__init__()
         self.nc=nc
 #        self.dep = nn.Sequential(
-        self.conv1=nn.Conv2d(num_channel, num_channel,
+        self.conv1=nn.Conv2d(num_channel, num_channel*2,
                   kernel_size=3, stride=1, padding=0, bias=False)
-        self.bn1=nn.BatchNorm2d(num_channel)
+        self.bn1=nn.BatchNorm2d(num_channel*2)
         self.relu=nn.ReLU(inplace=True)
-        self.conv2=nn.Conv2d(num_channel, num_channel,
+        self.conv2=nn.Conv2d(num_channel*2, num_channel*4,
                   kernel_size=3, stride=1, padding=0, bias=False)
-        self.bn2=nn.BatchNorm2d(num_channel)
+        self.bn2=nn.BatchNorm2d(num_channel*4)
 
-        self.conv3=nn.Conv2d(num_channel, num_channel,
+        self.conv3=nn.Conv2d(num_channel*4, num_channel*4,
                   kernel_size=3, stride=1, padding=0, bias=False)
-        self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, 1, kernel_size=1,
+        self.bn3=nn.BatchNorm2d(num_channel*4)
+        self.conv4=nn.Conv2d(num_channel*4, 1, kernel_size=1,
                   stride=1, padding=0, bias=True)
         self.sig=nn.Sigmoid()
 
@@ -489,19 +489,21 @@ class orient_pred(nn.Module):
         self.nc=nc
         self.num_channel=num_channel
 #        self.dep = nn.Sequential(
-        self.conv1=nn.Conv2d(num_channel, num_channel,
+        self.conv1=nn.Conv2d(num_channel, num_channel*2,
                   kernel_size=3, stride=1, padding=0, bias=False)
-        self.bn1=nn.BatchNorm2d(num_channel)
+        self.bn1=nn.BatchNorm2d(num_channel*2)
         self.relu=nn.ReLU(inplace=True)
-        self.conv2=nn.Conv2d(num_channel, num_channel,
+        self.conv2=nn.Conv2d(num_channel*2, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn2=nn.BatchNorm2d(num_channel)
-
-        self.conv3=nn.Conv2d(num_channel, num_channel,
+        self.conv3=nn.Conv2d(num_channel, num_channel*2,
                   kernel_size=3, stride=1, padding=0, bias=False)
-        self.bn3=nn.BatchNorm2d(num_channel)
-        self.conv4=nn.Conv2d(num_channel, 8, kernel_size=1,
-                  stride=1, padding=0, bias=True)
+        self.bn3=nn.BatchNorm2d(num_channel*2)
+        self.conv4=nn.Conv2d(num_channel*2, num_channel, kernel_size=1,
+                  stride=1, padding=0, bias=False)
+        # self.bn4=nn.BatchNorm2d(num_channel)
+        self.fc=nn.Linear(num_channel, 8)
+        self.drop=nn.Dropout(0.5)
 
 
 
@@ -511,10 +513,15 @@ class orient_pred(nn.Module):
         x=self.relu(x)
         x=self.conv2(x)
         x=self.bn2(x)
+        x=self.relu(x)
         x=self.conv3(x)
         if x.shape[0]>1:
             x=self.bn3(x)
-        x=self.conv4(x)
+        x=self.relu(x)
+        x=self.conv4(x).view(-1,self.num_channel)
+        x=self.relu(x)
+        x=self.drop(x)
+        x=self.fc(x)
         return x
 
 
@@ -561,7 +568,7 @@ class Model(nn.Module):
             roi=targets[:,2:6]
             if len(roi)==0:
                 return rois,torch.tensor([]),torch.tensor([])
-            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0)
+            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0, aligned=True)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
@@ -600,7 +607,7 @@ class Model(nn.Module):
             roi=[ torch.clamp(bbox[:,:4],min=0,max=width) for bbox in rois]
                 
                 # rois[:][:,:4]]
-            pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/32.0)
+            pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/32.0 , aligned=True)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
@@ -627,7 +634,7 @@ class Model(nn.Module):
             
             #Compute 3D center or object depth using GT bbox
             #For multi-gpu
-            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0)
+            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0, aligned=True)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100

@@ -75,7 +75,8 @@ def detect(
 
         # Get detections
         img = torch.from_numpy(img).unsqueeze(0).to(device)
-        det,center_pred, depth_pred,pred_dim,orient_pred = model(img,conf_thres=conf_thres, nms_thres=nms_thres,detect=True)
+        with torch.cuda.amp.autocast():
+            det,center_pred, depth_pred,pred_dim,orient_pred = model(img,conf_thres=conf_thres, nms_thres=nms_thres,detect=True)
         det=det[0]
         
         
@@ -126,7 +127,7 @@ def detect(
                 
                 theta=alpha+math.atan2(center_3d[0][0],center_3d[2][0])
                 
-                
+                theta=theta if theta>0 else theta+2*np.pi
 
                 
                 K_model_to_cam=np.array([[-np.sin(theta),0,np.cos(theta),center_3d[0][0]],
@@ -201,7 +202,7 @@ def detect(
                 orient_pixels[0,:]=np.clip(orient_pixels[0,:], 0, im0.shape[1])
                 orient_pixels=orient_pixels.round().astype(np.int32).T
                 
-                cv2.arrowedLine(im0,tuple(orient_pixels[0, :]),tuple(orient_pixels[1, :]),color=colors[int(cls)],thickness=2)
+                # cv2.arrowedLine(im0,tuple(orient_pixels[0, :]),tuple(orient_pixels[1, :]),color=colors[int(cls)],thickness=2)
                 
                 cv2.circle(im0,(round(x),round(y)),3,color=colors[int(cls)])
                 
@@ -241,11 +242,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/best.pt', help='path to weights file')
+    parser.add_argument('--weights', type=str, default='/media/antoine/NVMe/best.pt', help='path to weights file')
     parser.add_argument('--images', type=str, default='data/KITTI/val.txt', help='path to images')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
-    parser.add_argument('--nms-thres', type=float, default=0.45, help='iou threshold for non-maximum suppression')
+    parser.add_argument('--conf-thres', type=float, default=0.45, help='object confidence threshold')
+    parser.add_argument('--nms-thres', type=float, default=0.3, help='iou threshold for non-maximum suppression')
     parser.add_argument('--fourcc', type=str, default='mp4v', help='fourcc output video codec (verify ffmpeg support)')
     parser.add_argument('--output', type=str, default='output', help='specifies the output path for images and videos')
     opt = parser.parse_args()

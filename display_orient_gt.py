@@ -13,6 +13,7 @@ from models import *
 from utils.datasets import *
 from utils.utils import *
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 out_dir="/home/antoine/GT_Alpha/"
 
@@ -116,7 +117,7 @@ dataloader = DataLoader(dataset,
 nb=len(dataloader)
 accumulate=1
 
-
+alpha_list=[]
 for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi) in enumerate(tqdm(dataloader)):
     
     if len(targets)>0:
@@ -141,24 +142,32 @@ for i, (imgs, targets, paths, _,calib,pixel_to_normalized_resized,augmented_roi)
                     x,y=valid_targets[k,6:8].numpy()* imgs.shape[1]
                     alpha=valid_targets[k,13:14].clone()*360
                     alpha=alpha.item()
-                    obj_class=int(valid_targets[k,1].item())
+                    if alpha<0:
+                        alpha+=360
+                    alpha_list.append(alpha)
+                    # obj_class=int(valid_targets[k,1].item())
                     
-                    if alpha<90 and alpha >= 0:
-                        angle_dir="90/"
-                    if alpha<180 and alpha >= 90:
-                        angle_dir="180/"
-                    if alpha<270 and alpha >= 180:
-                        angle_dir="270/"
-                    if alpha<=360 and alpha >= 270:
-                        angle_dir="360/"
-                    cv2.circle(img,(round(x),round(y)),5,(0,0,255),3)
-                    roi[roi<0]=0
-                    label=angle_dir + str(obj_class) + '_' + str(round(alpha))+".png"
-                    cropped_img=img[round(roi[1]):round(roi[3]),round(roi[0]):round(roi[2])]
-                    try:
-                        cv2.imwrite(os.path.join(out_dir,label),cropped_img)
-                    except:
-                        print("eh")
+                    # if alpha<90 and alpha >= 0:
+                    #     angle_dir="90/"
+                    # if alpha<180 and alpha >= 90:
+                    #     angle_dir="180/"
+                    # if alpha<270 and alpha >= 180:
+                    #     angle_dir="270/"
+                    # if alpha<=360 and alpha >= 270:
+                    #     angle_dir="360/"
+                    # cv2.circle(img,(round(x),round(y)),5,(0,0,255),3)
+                    # roi[roi<0]=0
+                    # label=angle_dir + str(obj_class) + '_' + str(round(alpha))+".png"
+                    # cropped_img=img[round(roi[1]):round(roi[3]),round(roi[0]):round(roi[2])]
+                    # try:
+                    #     cv2.imwrite(os.path.join(out_dir,label),cropped_img)
+                    # except:
+                    #     print("eh")
     
     # if i==100:
     #     break
+
+hist=np.histogram(np.array(alpha_list))
+
+plt.hist(np.array(alpha_list), bins = 100)
+plt.show()

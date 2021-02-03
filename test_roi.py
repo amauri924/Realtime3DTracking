@@ -220,7 +220,7 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             talpha_mod=torch.tensor([talpha[idx_pred,0:1]-2*np.pi,talpha[idx_pred,0:1]+2*np.pi,talpha[idx_pred,0:1]])
             talpha_mod=talpha_mod[torch.min(abs(talpha_mod),0).indices].item()
             
-            mean_abs,_=get_orientation_score(p_alpha[idx_pred],talpha_mod)
+            mean_abs,angle_err=get_orientation_score(p_alpha[idx_pred],talpha_mod)
 
             orient_abs_err.append(torch.tensor(mean_abs))
             
@@ -472,10 +472,10 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/KITTI/Adam/run_6/best.pt', help='path to weights file')
-    parser.add_argument('--iou-thres', type=float, default=0.6, help='iou threshold required to qualify as detected')
-    parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
-    parser.add_argument('--nms-thres', type=float, default=0.6, help='iou threshold for non-maximum suppression')
+    parser.add_argument('--weights', type=str, default='weights/KITTI/Adam/run_16/best.pt', help='path to weights file')
+    parser.add_argument('--iou-thres', type=float, default=0.45, help='iou threshold required to qualify as detected')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
+    parser.add_argument('--nms-thres', type=float, default=0.45, help='iou threshold for non-maximum suppression')
     parser.add_argument('--save-json', default=False, help='save a cocoapi-compatible JSON results file')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
     opt = parser.parse_args()

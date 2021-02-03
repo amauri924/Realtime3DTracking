@@ -54,17 +54,19 @@ def print_mutation(hyp, results):
         with open('evolve.txt', 'a') as f:
             f.write(c + b + '\n')
 
-def setup_net_transfert(model):
-    model.transfer=True
+def setup_net_transfert(model,trainable_param):
     model.eval()
-    if type(model) is nn.parallel.DistributedDataParallel:
-        model.module.depth_pred.train()
-        model.module.featurePooling.train()
         
-    else:
+    if "depth" in trainable_param:
         model.depth_pred.train()
-        model.featurePooling.train()
-    return model
+    if "center" in trainable_param:
+        model.center_prediction.train()
+
+    if "angle" in trainable_param:
+        model.orientation_prediction.train()
+    if "dim" in trainable_param:
+        model.dimension_prediction.train()
+
 
 def compute_rel_err(pred,target):
     depth_target=target[:,8:9].clone().detach()*200
@@ -138,7 +140,7 @@ def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,res
         if type(model) is nn.parallel.DistributedDataParallel:
             results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                       model=model.module,
-                                      conf_thres=0.1)
+                                      conf_thres=0.25)
 #            with open("debug.txt","a") as f:
 #                f.write("Testing on the train split\n")
 #            results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
@@ -147,7 +149,7 @@ def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,res
         else:
             results,_ = test.test(cfg, data_cfg, batch_size=batch_size, img_size=opt.img_size,
                                       model=model,
-                                      conf_thres=0.1)
+                                      conf_thres=0.25)
 #            results_training,_ = test.test(cfg, 'data/3dcent-NS-training.data', batch_size=batch_size, img_size=opt.img_size,
 #                                      model=model,
 #                                      conf_thres=0.1)
@@ -172,11 +174,10 @@ def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,res
                  'best_fitness': best_fitness,
                      'training_results': file.read(),
                  'model': model.module.state_dict() if type(
-                     model) is nn.parallel.DistributedDataParallel else model.state_dict(),
-                 'optimizer': optimizer.state_dict()}
+                     model) is nn.parallel.DistributedDataParallel else model.state_dict()}
 
         # Save latest checkpoint
-        #torch.save(chkpt, latest)
+        # torch.save(chkpt, latest)
 
 #
         # Save best checkpoint
@@ -185,6 +186,23 @@ def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,res
                 torch.save(chkpt, best)
         
     return results,best_fitness
+
+def set_trainable_grad(model,trainable_param):
+    for p in model.parameters():
+        p.requires_grad=False
+    if "depth" in trainable_param:
+        for p in model.depth_pred.parameters():
+            p.requires_grad=True
+    if "center" in trainable_param:
+        for p in model.center_prediction.parameters():
+            p.requires_grad=True
+    if "angle" in trainable_param:
+        for p in model.orientation_prediction.parameters():
+            p.requires_grad=True
+    if "dim" in trainable_param:
+        for p in model.dimension_prediction.parameters():
+            p.requires_grad=True
+
 
 
 def train(
@@ -209,11 +227,13 @@ def train(
     device = rank
     print(device)
     device_loading= torch.tensor([]).to(device).device
-    multi_scale = True
+    multi_scale = False
     available_cpu=12
 
     print('num_cores_available:',available_cpu)
 
+    # trainable_param=["center","depth","angle","dim"]
+    trainable_param=["angle"]
     if multi_scale:
         img_size_min = round(img_size / 32 / 2)
         img_size_max = round(img_size / 32)
@@ -231,10 +251,12 @@ def train(
     # Initialize model
     model = Model(cfg,hyp,transfer=False).to(device)
 
+    set_trainable_grad(model,trainable_param)
+
     # Optimizer
     # optimizer=optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=1e-3, momentum=0.9, weight_decay=5e-4)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
-                            lr=1e-4,  weight_decay=3e-5, amsgrad=True)
+                            lr=1e-4,  weight_decay=1e-2, amsgrad=True)
     scaler = torch.cuda.amp.GradScaler()
     
     cutoff = -1  # backbone reaches to cutoff layer
@@ -243,34 +265,35 @@ def train(
     if opt.resume or opt.transfer:  # Load previously saved model
         if opt.transfer and not opt.resume:  # Transfer learning
 #            nf = int(model.module_defs[model.yolo_layers[0] - 1]['filters'])  # yolo layer size (i.e. 255)
-            chkpt = torch.load(weights + 'yolov3.pt', map_location=device_loading)
-            model_state=[k for k,v in model.Yolov3.state_dict().items()]
+            chkpt = torch.load('/media/antoine/NVMe/best.pt', map_location=device_loading)
+            model_state=[k for k,v in model.state_dict().items()]
             chkp_state=[k for k,v in chkpt['model'].items()]
 
             new_state={}
             for k,v in chkpt['model'].items():
-                layer=k.split('.')[1]
-                if k.split('.')[2]=="Conv2d":
-                    new_k=k.split('.')[0]+'.'+k.split('.')[1]+'.'+'conv_'+layer+'.'+k.split('.')[3]
-                if k.split('.')[2]=="BatchNorm2d":
-                    new_k=k.split('.')[0]+'.'+k.split('.')[1]+'.'+'batch_norm_'+layer+'.'+k.split('.')[3]
-                new_state[new_k]= v
+                # layer=k.split('.')[1]
+                # if k.split('.')[2]=="Conv2d":
+                #     new_k=k.split('.')[0]+'.'+k.split('.')[1]+'.'+'conv_'+layer+'.'+k.split('.')[3]
+                # if k.split('.')[2]=="BatchNorm2d":
+                #     new_k=k.split('.')[0]+'.'+k.split('.')[1]+'.'+'batch_norm_'+layer+'.'+k.split('.')[3]
+                new_state[k]= v
             tmp={k: new_state[k] for k in new_state if k in model_state}
-            new_state={k: tmp[k] for k in tmp if model.Yolov3.state_dict()[k].shape==tmp[k].shape}
-            model.Yolov3.load_state_dict({k: new_state[k] for k in new_state},strict=False)
+            tmp={k: new_state[k] for k in new_state if k.split('.')[0] == "Yolov3"}
+            new_state={k: tmp[k] for k in tmp if model.state_dict()[k].shape==tmp[k].shape}
+            model.load_state_dict({k: new_state[k] for k in new_state},strict=False)
             del new_state
 
         else:  # resume from latest.pt
-            chkpt = torch.load(latest, map_location=device_loading)  # load checkpoint
+            chkpt = torch.load("weights/KITTI/Adam/run_16/best.pt", map_location=device_loading)  # load checkpoint
             model.load_state_dict(chkpt['model'])
 
-        if chkpt['optimizer'] is not None:
-            if opt.resume:
-                optimizer.load_state_dict(chkpt['optimizer'])
-                try:
-                    best_fitness = chkpt['best_fitness']
-                except:
-                    best_fitness = 1e6
+        # if chkpt['optimizer'] is not None:
+        #     if opt.resume:
+        #         optimizer.load_state_dict(chkpt['optimizer'])
+        #         try:
+        #             best_fitness = chkpt['best_fitness']
+        #         except:
+        #             best_fitness = 1e6
                     
         try:
             if chkpt['training_results'] is not None:
@@ -279,7 +302,7 @@ def train(
         except:
             print("no previous training results")
 
-        start_epoch = chkpt['epoch'] + 1
+        # start_epoch = chkpt['epoch'] + 1
         del chkpt
 
 
@@ -315,7 +338,7 @@ def train(
                             sampler=train_sampler)
 
 
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate)+1,pct_start=0.05)
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, 7e-4, epochs=epochs, steps_per_epoch=int(len(dataloader)/accumulate)+1,pct_start=0.3)
     scheduler.last_epoch = start_epoch - 1
     if start_epoch!=0:
         for k in range((int(len(dataloader)/accumulate)+1)*start_epoch):
@@ -352,13 +375,13 @@ def train(
     
     torch.backends.cudnn.enabled = True
     for epoch in range(start_epoch, epochs):
-        if epoch < 50:
+        if epoch < 5:
             opt.notest = True
         else:
             opt.notest = False
         
         loss_scheduler=[]
-        model.train()
+        setup_net_transfert(model,trainable_param)
         rel_err=[]
         #set new learning rate
 #        for param_group in optimizer.param_groups:
@@ -490,10 +513,10 @@ def example(rank, world_size,opt):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
-    parser.add_argument('--epochs', type=int, default=1000, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=64,
+    parser.add_argument('--epochs', type=int, default=40, help='number of epochs')
+    parser.add_argument('--batch-size', type=int, default=23,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=4, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=11, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
