@@ -41,10 +41,10 @@ def get_alpha(rot):
     alpha2=np.zeros(len(rot[:, 2]))
     
     for i in range(len(alpha1)):
-        alpha1_mod=np.arctan2(rot[i, 2] , rot[i, 3])- 0
+        alpha1_mod=np.arctan2(rot[i, 2] , rot[i, 3])- 1/2*np.pi
         alpha1[i] = alpha1_mod.item()
     
-        alpha2_mod=np.arctan2(rot[i, 6] , rot[i, 7]) - np.pi
+        alpha2_mod=np.arctan2(rot[i, 6] , rot[i, 7]) + 1/2*np.pi
         alpha2[i] = alpha2_mod.item()
     return alpha1 * idx + alpha2 * (1 - idx)
 
@@ -121,15 +121,15 @@ def get_theta_pred(roi_pred,selected_calib,center_pred,depth_pred,selected_shape
         theta=pred_alpha[j]+math.atan2(center_3d[0][0],center_3d[2][0])
         theta_list.append(pred_alpha[j]+math.atan2(center_3d[0][0],center_3d[2][0]))
         
-        if previous_path!=selected_path[j]:
-            if j>0:
-                cv2.imwrite("/home/antoine/Realtime3DTracking/output/"+previous_path.split("/")[-1],img)
-            img=cv2.imread(selected_path[j])
-        dim=(default_dims_tensor[int(cls),:] - pred_dim[j,int(cls),:]*200).cpu().numpy()
-        display_3dbbox(img,theta,dim,center_3d,selected_calib[j])
-        previous_path=selected_path[j]
-        if j+1==len(roi_pred):
-            cv2.imwrite("/home/antoine/Realtime3DTracking/output/"+selected_path[j].split("/")[-1],img)
+#        if previous_path!=selected_path[j]:
+#            if j>0:
+#                cv2.imwrite("/home/antoine/Realtime3DTracking/output/"+previous_path.split("/")[-1],img)
+#            img=cv2.imread(selected_path[j])
+#        dim=(default_dims_tensor[int(cls),:] - pred_dim[j,int(cls),:]*200).cpu().numpy()
+#        display_3dbbox(img,theta,dim,center_3d,selected_calib[j])
+#        previous_path=selected_path[j]
+#        if j+1==len(roi_pred):
+#            cv2.imwrite("/home/antoine/Realtime3DTracking/output/"+selected_path[j].split("/")[-1],img)
     return theta_list
 
 def get_orientation_score(alpha_pd,alpha_gt):
@@ -212,8 +212,10 @@ def store_all_depths(depth_pred,targets,store_dict,associated):
     tcls=targets_selected[:,1]
     tdepth=targets_selected[:,8]
     
-    num_cls=int(torch.max(tcls).cpu().item())
-    
+    try:
+        num_cls=int(torch.max(tcls).cpu().item())
+    except:
+        return store_dict
     for i in range(num_cls+1):
         idx_cls=(tcls==i).nonzero()[:,0]
         class_tdepth=torch.index_select(tdepth,0,idx_cls.T)
@@ -592,7 +594,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='/media/antoine/NVMe/best.pt', help='path to weights file')
+    parser.add_argument('--weights', type=str, default='weights/Criann_KITTI/best.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.3, help='iou threshold required to qualify as detected')
     parser.add_argument('--conf-thres', type=float, default=0.45, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.3, help='iou threshold for non-maximum suppression')
