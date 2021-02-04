@@ -98,7 +98,7 @@ class LoadImages:  # for inference
             print('image %g/%g %s: ' % (self.count, self.nF, path), end='')
 
         # Padded resize
-        img, *_ = letterbox(img0, new_shape=self.height)
+        img, *_ = letterbox(img0, new_shape=self.height,  mode='square')
 
         # Normalize RGB
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB

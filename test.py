@@ -591,7 +591,7 @@ def test(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
+    parser.add_argument('--batch-size', type=int, default=8, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
     parser.add_argument('--weights', type=str, default='weights/Criann_KITTI/best.pt', help='path to weights file')
