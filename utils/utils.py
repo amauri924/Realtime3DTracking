@@ -944,7 +944,7 @@ def compute_rot_loss(t_alpha,orient_pred,l_orientation):
         alpha_mod=torch.tensor([alpha,alpha+2*np.pi,alpha-2*np.pi],device=orient_pred.device)
         alpha_mod=alpha_mod[torch.min(abs(alpha_mod), 0).indices]
         res_gt[idx,0]=alpha_mod
-        if abs(alpha_mod)< 120*np.pi/180:
+        if abs(alpha_mod)< 105*np.pi/180:
             bin_gt[idx,0]=1.0
         
         
