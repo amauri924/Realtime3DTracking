@@ -140,7 +140,7 @@ class Yolov3(nn.Module):
                 x = module[0](x, img_size)
                 output.append(x)
             layer_outputs.append(x)
-            if i==73:
+            if i==61:
                 features=x
             
         time_detection=time.time()-detection_time
@@ -301,7 +301,7 @@ class Depth_Layer(nn.Module):
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn1=nn.BatchNorm2d(num_channel)
-        self.relu=nn.ReLU(inplace=True)
+        self.relu=nn.LeakyReLU(0.1, inplace=True)
         self.conv2=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn2=nn.BatchNorm2d(num_channel)
@@ -421,7 +421,7 @@ class center_pred(nn.Module):
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn1=nn.BatchNorm2d(num_channel)
-        self.relu=nn.ReLU(inplace=True)
+        self.relu=nn.LeakyReLU(0.1, inplace=True)
         self.conv2=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn2=nn.BatchNorm2d(num_channel)
@@ -456,7 +456,7 @@ class dim_pred(nn.Module):
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn1=nn.BatchNorm2d(num_channel)
-        self.relu=nn.ReLU(inplace=True)
+        self.relu=nn.LeakyReLU(0.1, inplace=True)
         self.conv2=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn2=nn.BatchNorm2d(num_channel)
@@ -492,7 +492,7 @@ class orient_pred(nn.Module):
         self.conv1=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn1=nn.BatchNorm2d(num_channel)
-        self.relu=nn.ReLU(inplace=True)
+        self.relu=nn.LeakyReLU(0.1, inplace=True)
         self.conv2=nn.Conv2d(num_channel, num_channel,
                   kernel_size=3, stride=1, padding=0, bias=False)
         self.bn2=nn.BatchNorm2d(num_channel)
@@ -524,7 +524,7 @@ class Model(nn.Module):
 
     def __init__(self, cfg,hyp,transfer=False, img_size=(416, 416),encoder="Darknet"):
         super(Model, self).__init__()
-        self.num_channel=1024
+        self.num_channel=512
         
         self.Yolov3=Yolov3(cfg,img_size)
 #        _ = load_darknet_weights(self, "weights/" + 'darknet53.conv.74')
@@ -561,7 +561,7 @@ class Model(nn.Module):
             roi=targets[:,2:6]
             if len(roi)==0:
                 return rois,torch.tensor([]),torch.tensor([])
-            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0)
+            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/16.0, aligned=True)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
@@ -600,7 +600,7 @@ class Model(nn.Module):
             roi=[ torch.clamp(bbox[:,:4],min=0,max=width) for bbox in rois]
                 
                 # rois[:][:,:4]]
-            pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/32.0)
+            pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/16.0,aligned=True)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
@@ -627,7 +627,7 @@ class Model(nn.Module):
             
             #Compute 3D center or object depth using GT bbox
             #For multi-gpu
-            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/32.0)
+            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/16.0, aligned=True)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100

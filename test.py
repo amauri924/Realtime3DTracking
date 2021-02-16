@@ -139,7 +139,9 @@ def get_orientation_score(alpha_pd,alpha_gt):
     return OS,delta_theta
 
 def compute_depth_errors(gt, pred):
-    assert (np.all(np.isfinite(gt) & np.isfinite(pred) & (gt > 0) & (pred > 0)))
+#    assert (np.all(np.isfinite(gt) & np.isfinite(pred) & (gt > 0) & (pred > 0)))
+    if np.all(pred == 0):
+        pred+= 1e-5
     thresh = np.maximum((gt / pred), (pred / gt))
     a1 = (thresh < 1.25).mean()
     a2 = (thresh < 1.25 ** 2).mean()
@@ -176,7 +178,7 @@ def compute_classification_orient(t_alpha,orient_pred):
     
     
     for idx in range(len(bin_gt)):
-        alpha=t_alpha[idx]+0
+        alpha=t_alpha[idx]+1/2*np.pi
         
         
         #set alpha modulo pi
@@ -187,7 +189,7 @@ def compute_classification_orient(t_alpha,orient_pred):
             bin_gt[idx,0]=1.0
         
         
-        alpha=t_alpha[idx]-np.pi
+        alpha=t_alpha[idx]-1/2*np.pi
         #set alpha modulo pi
         alpha_mod=torch.tensor([alpha,alpha+2*np.pi,alpha-2*np.pi],device=orient_pred.device)
         alpha_mod=alpha_mod[torch.min(abs(alpha_mod), 0).indices]
@@ -275,11 +277,11 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
         
         p_alpha=get_alpha(orient_pred.cpu().data.numpy())
         
-        theta_pred=get_theta_pred(roi_pred,selected_calib,center_pred,depth_pred,selected_shape,p_alpha,default_dims_tensor,pred_dim,selected_path)
+        #theta_pred=get_theta_pred(roi_pred,selected_calib,center_pred,depth_pred,selected_shape,p_alpha,default_dims_tensor,pred_dim,selected_path)
         
-        theta_target=labels[:, 11:12]*2*np.pi
-        theta_target=theta_target.view(-1).cpu().numpy()
-        theta_OS,_=get_orientation_score(np.array(theta_pred),theta_target)
+        #theta_target=labels[:, 11:12]*2*np.pi
+        #theta_target=theta_target.view(-1).cpu().numpy()
+        #theta_OS,_=get_orientation_score(np.array(theta_pred),theta_target)
         
         
         
@@ -290,6 +292,10 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             
             gt_depth=tdepth[idx_pred]
             predicted_depth=depth_pred[idx_pred]
+            
+            if predicted_depth*200<4 or predicted_depth*200>80:
+#                print("skipping because bad depth")
+                continue
 
             obj_cls=int(tcls[idx_pred])
             gt_dim=tdim[idx_pred]
@@ -300,18 +306,36 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             predicted_dim=predicted_dim
 
             
-            w_bbox=tbox[idx_pred][2].cpu().item()-tbox[idx_pred][0].cpu().item()
-            h_bbox=tbox[idx_pred][3].cpu().item()-tbox[idx_pred][1].cpu().item()
-            centerbbox_x=tbox[idx_pred][0].cpu().item()+w_bbox/2
-            centerbbox_y=tbox[idx_pred][1].cpu().item()+h_bbox/2
+            w_bbox=roi_pred[idx_pred][2].cpu().item()-roi_pred[idx_pred][0].cpu().item()
+            h_bbox=roi_pred[idx_pred][3].cpu().item()-roi_pred[idx_pred][1].cpu().item()
+            centerbbox_x=roi_pred[idx_pred][0].cpu().item()+w_bbox/2
+            centerbbox_y=roi_pred[idx_pred][1].cpu().item()+h_bbox/2
             
             predicted_center[0]=predicted_center[0]*w_bbox+centerbbox_x
             predicted_center[1]=predicted_center[1]*h_bbox+centerbbox_y
             
+            
+            
+            # delta_roi= abs(xyxy2xywh(tbox[idx_pred].view(-1,4)) - xyxy2xywh(roi_pred[idx_pred,:4].view(-1,4)))
+            # delta_roi[:,[0,1]]/=xyxy2xywh(tbox[idx_pred].view(-1,4))[:,[2,3]]
+            # delta_roi[:,[2,3]]/=xyxy2xywh(tbox[idx_pred].view(-1,4))[:,[2,3]]
+            
+            # mean_abs=delta_roi
+            #####################DIM###############################
             tmp_dim_abs_err=[]
             for k in range(len(gt_dim)):
                 tmp_dim_abs_err.append(abs(abs(predicted_dim[k]-gt_dim[k])/(gt_dim[k])))
             mean_abs=torch.mean(torch.tensor(tmp_dim_abs_err))
+            
+            #####################CS#####################################
+            # mean_abs=(2+torch.cos((target_center[0]-predicted_center[0])/w_bbox)+torch.cos((target_center[0]-predicted_center[0])/h_bbox))/4
+            
+            #####################DS###############################
+#            V_gt=gt_dim[0]*gt_dim[1]*gt_dim[2]
+#            V_pd=predicted_dim[0]*predicted_dim[1]*predicted_dim[2]
+#            mean_abs=torch.min(V_gt/V_pd,V_pd/V_gt)
+            
+            
             dim_abs_err.append(mean_abs)
             try:
                 dim_abs_err_dict[obj_cls].append(mean_abs.item())
@@ -321,18 +345,18 @@ def compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,orient_pred,
             
             center_abs_err.append(torch.mean(torch.tensor([abs(abs(predicted_center[0]-target_center[0])/target_center[0]),abs(abs(predicted_center[1]-target_center[1])/target_center[1])])))
             
-            depth_abs=abs(abs(predicted_depth-gt_depth)/(gt_depth+0.00001))
+            depth_abs=abs(abs(predicted_depth*200-gt_depth*200)/(gt_depth*200+0.00001))
             depth_abs_err.append(depth_abs)
             try:
                 depth_abs_err_dict[obj_cls].append(depth_abs.item())
             except:
                 depth_abs_err_dict[obj_cls]=[depth_abs.item()]
             
-            # talpha_mod=torch.tensor([talpha[idx_pred,0:1]-2*np.pi,talpha[idx_pred,0:1]+2*np.pi,talpha[idx_pred,0:1]])
-            # talpha_mod=talpha_mod[torch.min(abs(talpha_mod),0).indices].item()
+            talpha_mod=torch.tensor([talpha[idx_pred,0:1]-2*np.pi,talpha[idx_pred,0:1]+2*np.pi,talpha[idx_pred,0:1]])
+            talpha_mod=talpha_mod[torch.min(abs(talpha_mod),0).indices].item()
             
-            # mean_abs,_=get_orientation_score(p_alpha[idx_pred],talpha_mod)
-            mean_abs,_=get_orientation_score(theta_pred[idx_pred],theta_target[idx_pred])
+            mean_abs,_=get_orientation_score(p_alpha[idx_pred],talpha_mod)
+            #mean_abs,_=get_orientation_score(theta_pred[idx_pred],theta_target[idx_pred])
 
             orient_abs_err.append(torch.tensor(mean_abs))
             
@@ -541,10 +565,10 @@ def test(
             continue
         input_targets,width,height,imgs,targets=prepare_data_for_foward_pass(targets,device,imgs)
         calib=calib.to(imgs.device)
-        with torch.cuda.amp.autocast():
-            output_roi,center_pred, depth_pred ,pred_dim,orient_pred= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,detect=True)  # inference and training outputs
+        # with torch.cuda.amp.autocast():
+        output_roi,center_pred, depth_pred ,pred_dim,orient_pred= model(imgs,conf_thres=conf_thres, nms_thres=nms_thres,detect=True)  # inference and training outputs
 
-        stats,seen,associated=compute_bbox_error(output_roi,targets,stats,width,height,iou_thres,seen)
+        stats,seen,associated=compute_bbox_error(output_roi,targets,stats,width,height,0.5,seen)
         center_abs_err,depth_abs_err,dim_abs_err,orient_abs_err,dim_abs_err_dict, orient_abs_err_dict, depth_abs_err_dict,bin_pred_error_list,loss_list=compute_center_and_depth_errors(center_pred,depth_pred,pred_dim,
                                                                         orient_pred,center_abs_err,depth_abs_err,
                                                                         dim_abs_err,orient_abs_err,targets,(width,height),
@@ -591,12 +615,12 @@ def test(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--batch-size', type=int, default=8, help='size of each image batch')
+    parser.add_argument('--batch-size', type=int, default=10, help='size of each image batch')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
-    parser.add_argument('--weights', type=str, default='weights/Criann_KITTI/best.pt', help='path to weights file')
+    parser.add_argument('--weights', type=str, default='weights/latest.pt', help='path to weights file')
     parser.add_argument('--iou-thres', type=float, default=0.3, help='iou threshold required to qualify as detected')
-    parser.add_argument('--conf-thres', type=float, default=0.45, help='object confidence threshold')
+    parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
     parser.add_argument('--nms-thres', type=float, default=0.3, help='iou threshold for non-maximum suppression')
     parser.add_argument('--save-json', default=False, help='save a cocoapi-compatible JSON results file')
     parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')

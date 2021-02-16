@@ -1,6 +1,0 @@
-classes=1
-train=./data/3dcent/train.txt
-valid=./data/3dcent/test.txt
-names=data/adapt.names
-backup=backup/
-top=2

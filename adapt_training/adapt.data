@@ -1,6 +1,0 @@
-classes=3
-train=./data/adapt/train.txt
-valid=./data/adapt/test2.txt
-names=data/adapt.names
-backup=backup/
-top=2
