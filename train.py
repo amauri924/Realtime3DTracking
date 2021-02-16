@@ -44,15 +44,6 @@ def slow_bn(network, val=0.9):
         if isinstance(module, torch.nn.BatchNorm2d):
             module.momentum = val
 
-def weights_init(network):
-    for name, m in network.named_modules():
-        if isinstance(m, nn.Conv2d):
-            torch.nn.init.xavier_uniform_(m.weight)
-            try:
-                torch.nn.init.zeros_(m.bias)
-            except:
-                continue
-
 def print_mutation(hyp, results):
     # Write mutation results
     a = '%11s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
@@ -111,7 +102,7 @@ def print_batch_results(mloss,i,loss_items,loss_scheduler,epoch,epochs,optimizer
 
 
 def prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized):
-    input_targets=augmented_roi
+    input_targets=augmented_roi.clone()
     targets = targets.to(device)
     
 
@@ -125,11 +116,16 @@ def prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,acc
         
     
     #xywh€[0,1] to xyxy in pixels
-    input_targets[:, [3, 5]] *= imgs.shape[2]
-    input_targets[:, [2, 4]] *= imgs.shape[3]
-    input_targets[:, 2:6]=xywh2xyxy(input_targets[:, 2:6])
-    input_targets[:, [3, 5]]=torch.clamp(input_targets[:, [3, 5]],min=0,max=imgs.shape[2])
-    input_targets[:, [2, 4]]=torch.clamp(input_targets[:, [2, 4]],min=0,max=imgs.shape[3])
+    input_targets[:, [2+1, 4+1]] *= imgs.shape[2]
+    input_targets[:, [1+1, 3+1]] *= imgs.shape[3]
+    x_centers=input_targets[:,2].clone()
+    y_centers=input_targets[:,3].clone()
+    w=input_targets[:,4].clone()
+    h=input_targets[:,5].clone()
+    input_targets[:,2]=x_centers-w/2
+    input_targets[:,4]=x_centers+w/2
+    input_targets[:,3]=y_centers-h/2
+    input_targets[:,5]=y_centers+h/2
 
     pixel_to_normalized_resized=pixel_to_normalized_resized.to(device)
     resize_matrix=pixel_to_normalized_resized
@@ -138,12 +134,7 @@ def prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,acc
     input_targets = input_targets.to(device,non_blocking=True)
     
     
-    targets_augmented=input_targets.clone()
-    targets_augmented[:, 2:6]=xyxy2xywh(targets_augmented[:, 2:6])
-    targets_augmented[:, [3, 5]] /= imgs.shape[2]
-    targets_augmented[:, [2, 4]] /= imgs.shape[3]
-    
-    return imgs,targets,input_targets,img_size,resize_matrix,targets_augmented
+    return imgs,targets,input_targets,img_size,resize_matrix
 
 def run_test_and_save(model,opt,optimizer,s,data_cfg,batch_size,cfg,log_path,result_path,best_fitness,epoch,epochs,latest,best):
     with open(log_path, 'a') as logfile:
@@ -224,13 +215,13 @@ def train(
     device = rank
     print(device)
     device_loading= torch.tensor([]).to(device).device
-    multi_scale = False
+    multi_scale = True
     available_cpu=12
 
     print('num_cores_available:',available_cpu)
 
     if multi_scale:
-        img_size_min = round(img_size / 32 / 2)
+        img_size_min = round(img_size / 32 / 1.5)
         img_size_max = round(img_size / 32)
         img_size = img_size_max * 32  # initiate with maximum multi_scale size
     else:
@@ -247,7 +238,7 @@ def train(
     model = Model(cfg,hyp,transfer=False).to(device)
 
     slow_bn(model, val=0.01)
-    weights_init(model)
+
     # Optimizer
     # optimizer=optim.SGD(filter(lambda p: p.requires_grad,model.parameters()), lr=1e-3, momentum=0.9, weight_decay=5e-4)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad,model.parameters()),
@@ -394,18 +385,20 @@ def train(
                 # if opt.depth_aug:
                 #     targets=rois_augmentation_for_depth(targets,0.2,0.02)
                 #Prepare data
-                imgs,targets,input_targets,img_size,resize_matrix,targets_augmented=prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,
+                imgs,targets,input_targets,img_size,resize_matrix=prepare_data_before_forward(imgs,device,targets,augmented_roi,i,nb,epoch,accumulate,
                                             multi_scale,img_size_min,img_size_max,idx_train,paths,img_size,pixel_to_normalized_resized)
-                # with torch.autograd.set_detect_anomaly(True):
+                
                 # Run model
-                # with torch.cuda.amp.autocast():
-                pred,pred_center,depth_pred,dim_pred,orient_pred = model(imgs,targets=input_targets[:,np.array([0, 2, 3,4,5 ])])
-                loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,orient_pred, targets,targets_augmented,
-                                                model,imgs.shape[2:],calib,resize_matrix,default_dims_tensor, giou_loss=not opt.xywh,rank=device)
-                   
-                    # Compute gradient
-                    # scaler.scale(loss).backward()
-                loss.backward()
+                with torch.cuda.amp.autocast():
+                    pred,pred_center,depth_pred,dim_pred,orient_pred,associated = model(imgs,targets=targets,conf_thres=0.1,nms_thres=0.6)
+                    loss, loss_items = compute_loss(pred,pred_center,depth_pred,dim_pred,
+                                                    orient_pred, targets, model,imgs.shape[2:],
+                                                    calib,resize_matrix,default_dims_tensor,
+                                                    giou_loss=not opt.xywh,rank=device,associated=associated)
+               
+                # Compute gradient
+                scaler.scale(loss).backward()
+              
                 #Depth relative error
                 # rel_err_=compute_rel_err(depth_pred.float(),targets.float())
                 # for value in rel_err_:
@@ -443,9 +436,8 @@ def train(
                 pbar.set_description(s)
             # Accumulate gradient for x batches before optimizing
             if (i + 1) % accumulate == 0 or (i + 1) == nb:
-                optimizer.step()
-                # scaler.step(optimizer)
-                # scaler.update() 
+                scaler.step(optimizer)
+                scaler.update() 
                 for param in model.parameters():
                     param.grad = None
                 scheduler.step()
@@ -510,16 +502,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', default='', help='number of epochs')
     parser.add_argument('--epochs', type=int, default=720, help='number of epochs')
-    parser.add_argument('--batch-size', type=int, default=8,
+    parser.add_argument('--batch-size', type=int, default=12,
                         help='batch size')
-    parser.add_argument('--accumulate', type=int, default=32, help='number of batches to accumulate before optimizing')
+    parser.add_argument('--accumulate', type=int, default=21, help='number of batches to accumulate before optimizing')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3-3dcent-KITTI.cfg', help='cfg file path')
     parser.add_argument('--data-cfg', type=str, default='data/KITTI.data', help='coco.data file path')
     parser.add_argument('--multi-scale', default=True, help='train at (1/1.5)x - 1.5x sizes')
-    parser.add_argument('--img-size', type=int, default=512, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--rect', default=False, help='rectangular training')
     parser.add_argument('--resume', default=False, help='resume training flag')
-    parser.add_argument('--depth_aug', default=True, help='resume training flag')
+    parser.add_argument('--depth_aug', default=False, help='resume training flag')
     parser.add_argument('--transfer', default=True, help='transfer learning flag')
     parser.add_argument('--num-workers', type=int, default=7, help='number of Pytorch DataLoader workers')
     parser.add_argument('--nosave', default=False, help='only save final checkpoint')

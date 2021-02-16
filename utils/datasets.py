@@ -384,9 +384,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         img = np.ascontiguousarray(img, dtype=np.float32)  # uint8 to float32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         
-        if random.random() > 0.2 and self.depth_aug:
-            # augmented_roi=rois_augmentation_for_depth(labels_out,[0.364,0.300],[0.289,0.149],img.shape)
-            augmented_roi=rois_augmentation_for_depth(labels_out,[0.500,0.500],[0.500,0.500],img.shape)
+        if random.random() > 0.5 and self.depth_aug:
+            augmented_roi=rois_augmentation_for_depth(labels_out,0.6,0.)
         else:
             augmented_roi=labels_out.clone()
 
@@ -632,7 +631,7 @@ class LoadImagesAndLabels_display(Dataset):  # for training/testing
         # img /= 255.0  # 0 - 255 to 0.0 - 1.0
         
         if random.random() > 0.5 and self.depth_aug:
-            augmented_roi=rois_augmentation_for_depth(labels_out,0.05,0.02,img.shape)
+            augmented_roi=rois_augmentation_for_depth(labels_out,0.05,0.02)
         else:
             augmented_roi=labels_out.clone()
 
@@ -784,34 +783,26 @@ def convert_images2bmp():
             file.write(lines)
 
 
-def rois_augmentation_for_depth(targets,sigma_shape,sigma_center,img_shape):
+def rois_augmentation_for_depth(targets,sigma_shape,sigma_center):
     new_targets=targets.clone() # rois augmentation for depth prediction
-    
-    new_targets[:, [3, 5]] *= img_shape[1]  # height
-    new_targets[:, [2, 4]] *= img_shape[2]  # width
-    for i in range(len(new_targets)):
+
+    for i in range(len(targets)):
+        sigma_shape=sigma_shape #Bbox width and height will be augmented with a max of 20% of their original value
+        sigma_center=sigma_center #Bbox 3d centers will be augmented with a max of 2% of their original value
+        h_var=random.random()*sigma_shape 
+        w_var=random.random()*sigma_shape
+        x_var=random.random()*sigma_center
+        y_var=random.random()*sigma_center
+        x1=(new_targets[i,2]+x_var*new_targets[i,2])-(new_targets[i,4]+w_var*new_targets[i,4])/2
+        x2=(new_targets[i,2]+x_var*new_targets[i,2])+(new_targets[i,4]+w_var*new_targets[i,4])/2
+        y1=(new_targets[i,3]+y_var*new_targets[i,3])-(new_targets[i,5]+h_var*new_targets[i,5])/2
+        y2=(new_targets[i,3]+y_var*new_targets[i,3])+(new_targets[i,5]+h_var*new_targets[i,5])/2
         
-        w_bbox=new_targets[i, 4]
-        h_bbox=new_targets[i, 5]
+        if min(x1,x2)>=0 and max(x1,x2)<=1:
+            new_targets[i,2]+=x_var
+            new_targets[i,4]+=w_var*new_targets[i,4]
         
-        h_var=random.random()*sigma_shape[1] if bool(random.randint(0,1)) else -random.random()*sigma_shape[1]
-        w_var=random.random()*sigma_shape[0] if bool(random.randint(0,1)) else -random.random()*sigma_shape[0]
-        x_var=random.random()*sigma_center[0] if bool(random.randint(0,1)) else -random.random()*sigma_center[0]
-        y_var=random.random()*sigma_center[1] if bool(random.randint(0,1)) else -random.random()*sigma_center[1]
-        
-        new_targets[i,2]+=x_var*w_bbox
-        new_targets[i,3]+=y_var*h_bbox
-        new_targets[i,4]+=w_var*w_bbox
-        new_targets[i,5]+=h_var*h_bbox
-        
-        
-    new_targets[:, [3, 5]] /= img_shape[1]  # height
-    new_targets[:, [2, 4]] /= img_shape[2]  # width
-        # if min(x1,x2)>=0 and max(x1,x2)<=1:
-        #     new_targets[i,2]+=x_var
-        #     new_targets[i,4]+=w_var*new_targets[i,4]
-        
-        # if min(y1,y2)>=0 and max(y1,y2)<=1:
-        #     new_targets[i,3]+=y_var
-        #     new_targets[i,5]+=h_var*new_targets[i,5]
+        if min(y1,y2)>=0 and max(y1,y2)<=1:
+            new_targets[i,3]+=y_var
+            new_targets[i,5]+=h_var*new_targets[i,5]
     return new_targets

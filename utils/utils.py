@@ -276,7 +276,7 @@ def get_depth(pred):
     depth=1/pred -1
     return depth
 
-def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_augmented, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0,associated=[]):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0,associated=[]):  # predictions, targets, model
     calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
     lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation,lloc_cent = ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank)
@@ -340,26 +340,26 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
 
         lobj += BCEobj(pi0[..., 4], tobj)  # obj loss
     
-    # if len(associated)>0:
-    #     indxs_target=torch.tensor([idx[0] for idx in associated],device=targets.device)
-    #     targets=torch.index_select(targets,0,indxs_target)
-    # else:
+    if len(associated)>0:
+        indxs_target=torch.tensor([idx[0] for idx in associated],device=targets.device)
+        targets=torch.index_select(targets,0,indxs_target)
+    else:
         
-    #     lxy *= (k * h['giou']) / nt
-    #     lwh *= (k * h['wh']) / nt
-    #     lcls *= (k * h['cls']) / (nt * nc)
-    #     lobj *= (k * h['obj']) / ng
-    #     loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation +lloc_cent
-    #     return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation,lloc_cent, loss)).detach()
+        lxy *= (k * h['giou']) / nt
+        lwh *= (k * h['wh']) / nt
+        lcls *= (k * h['cls']) / (nt * nc)
+        lobj *= (k * h['obj']) / ng
+        loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation +lloc_cent
+        return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation,lloc_cent, loss)).detach()
         
     pcent= p_center.view(-1,2) #Associated 3D centers
-    gt_depth=targets_augmented[:,8].clone().view(-1,1)
+    gt_depth=targets[:,8].clone().view(-1,1)
     p_depth=pred_depth
     
 #    
 #    pdim=dim_pred
     
-    tdim=targets_augmented[:,9:12].clone()
+    tdim=targets[:,9:12].clone()
     
     
     try:
@@ -367,18 +367,18 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
         for image_idx in range(len(tdim_offsets)):
             tdim_offsets[image_idx,:,:]=default_dims_tensor/200 - tdim[image_idx,:]
             
-        pdim_closest=torch.cat([dim_pred[idx,int(index),:] for idx,index in enumerate(targets_augmented[:,1])]).view(-1,3) #Select center prediction corresponding to the target class
-        tdim_closest=torch.cat([tdim_offsets[idx,int(index),:] for idx,index in enumerate(targets_augmented[:,1])]).view(-1,3)
+        pdim_closest=torch.cat([dim_pred[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3) #Select center prediction corresponding to the target class
+        tdim_closest=torch.cat([tdim_offsets[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3)
     except:
         print("err")
     pdim=dim_pred
     
     
-    t_alpha=targets_augmented[:,13:14].clone()
+    t_alpha=targets[:,13:14].clone()
     l_orientation=compute_rot_loss(t_alpha,orient_pred,l_orientation)*100
 
 #    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
-    rois=targets_augmented[:,2:6].clone().to(dtype=pdim.dtype) # Rois closest to anchors 
+    rois=targets[:,2:6].clone().to(dtype=pdim.dtype) # Rois closest to anchors 
     rois[:,0]*=img_shape[0]
     rois[:,2]*=img_shape[0]
     rois[:,1]*=img_shape[1]
@@ -387,7 +387,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
     #batch numbers
 #    batch_num=targets[:,0].cpu().numpy()
     
-    target_cent=targets_augmented[:,6:8].clone()
+    target_cent=targets[:,6:8].clone()
     target_cent[:,0]*=img_shape[0]
     target_cent[:,1]*=img_shape[1]
 
@@ -409,7 +409,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
     
     ldepth += L1loss(p_depth*200,gt_depth*200)
     
-    lloc_cent+=compute_loc_cent_loss(target_cent_loc,targets_augmented[:,0],gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,lloc_cent)
+    # lloc_cent+=compute_loc_cent_loss(target_cent_loc,targets[:,0],gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,lloc_cent)
     
     
     lxy *= (k * h['giou']) / nt
@@ -636,78 +636,91 @@ def box_iou(box1, box2):
     inter = (torch.min(box1[:, None, 2:], box2[:, 2:]) - torch.max(box1[:, None, :2], box2[:, :2])).clamp(0).prod(2)
     return inter / (area1[:, None] + area2 - inter)  # iou = inter / (area1 + area2 - inter)
 
-def new_non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, multi_label=True, classes=None, agnostic=False):
+def new_non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False, labels=()):
+    """Performs Non-Maximum Suppression (NMS) on inference results
+
+    Returns:
+         detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
     """
-    Performs  Non-Maximum Suppression on inference results
-    Returns detections with shape:
-        nx6 (x1, y1, x2, y2, conf, cls)
-    """
+
+    nc = prediction.shape[2] - 5  # number of classes
+    xc = prediction[..., 4] > conf_thres  # candidates
 
     # Settings
-    merge = True  # merge for best mAP
     min_wh, max_wh = 2, 4096  # (pixels) minimum and maximum box width and height
+    max_det = 300  # maximum number of detections per image
+    max_nms = 30000  # maximum number of boxes into torchvision.ops.nms()
     time_limit = 10.0  # seconds to quit after
+    redundant = True  # require redundant detections
+    multi_label = nc > 1  # multiple labels per box (adds 0.5ms/img)
+    merge = False  # use merge-NMS
 
     t = time.time()
-    nc = prediction[0].shape[1] - 5  # number of classes
-    multi_label &= nc > 1  # multiple labels per box
-    output = [None] * prediction.shape[0]
+    output = [torch.zeros((0, 6), device=prediction.device)] * prediction.shape[0]
     for xi, x in enumerate(prediction):  # image index, image inference
         # Apply constraints
-        x = x[x[:, 4] > conf_thres]  # confidence
-        x = x[((x[:, 2:4] > min_wh) & (x[:, 2:4] < max_wh)).all(1)]  # width-height
+        # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
+        x = x[xc[xi]]  # confidence
+
+        # Cat apriori labels if autolabelling
+        if labels and len(labels[xi]):
+            l = labels[xi]
+            v = torch.zeros((len(l), nc + 5), device=x.device)
+            v[:, :4] = l[:, 1:5]  # box
+            v[:, 4] = 1.0  # conf
+            v[range(len(l)), l[:, 0].long() + 5] = 1.0  # cls
+            x = torch.cat((x, v), 0)
 
         # If none remain process next image
         if not x.shape[0]:
             continue
 
         # Compute conf
-        x[..., 5:] *= x[..., 4:5]  # conf = obj_conf * cls_conf
+        x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = xywh2xyxy(x[:, :4])
 
         # Detections matrix nx6 (xyxy, conf, cls)
         if multi_label:
-            i, j = (x[:, 5:] > conf_thres).nonzero().t()
-            x = torch.cat((box[i], x[i, j + 5].unsqueeze(1), j.float().unsqueeze(1)), 1)
+            i, j = (x[:, 5:] > conf_thres).nonzero(as_tuple=False).T
+            x = torch.cat((box[i], x[i, j + 5, None], j[:, None].float()), 1)
         else:  # best class only
-            conf, j = x[:, 5:].max(1)
-            x = torch.cat((box,x[..., 4:5], conf.unsqueeze(1), j.float().unsqueeze(1)), 1)[conf > conf_thres]
-            
+            conf, j = x[:, 5:].max(1, keepdim=True)
+            x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+
         # Filter by class
-        if classes:
-            x = x[(j.view(-1, 1) == torch.tensor(classes, device=j.device)).any(1)]
+        if classes is not None:
+            x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
 
         # Apply finite constraint
         # if not torch.isfinite(x).all():
         #     x = x[torch.isfinite(x).all(1)]
 
-        # If none remain process next image
+        # Check shape
         n = x.shape[0]  # number of boxes
-        if not n:
+        if not n:  # no boxes
             continue
-
-        # Sort by confidence
-        # x = x[x[:, 4].argsort(descending=True)]
+        elif n > max_nms:  # excess boxes
+            x = x[x[:, 4].argsort(descending=True)[:max_nms]]  # sort by confidence
 
         # Batched NMS
-        c = x[:, 5] * 0 if agnostic else x[:, 5]  # classes
-        boxes, scores = x[:, :4].clone() , x[:, 4]  # boxes (offset by class), scores
-        i = torchvision.ops.boxes.nms(boxes, scores, iou_thres)
+        c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
+        boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
+        i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
+        if i.shape[0] > max_det:  # limit detections
+            i = i[:max_det]
         if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
-            try:  # update boxes as boxes(i,4) = weights(i,n) * boxes(n,4)
-                iou = box_iou(boxes[i], boxes) > iou_thres  # iou matrix
-                weights = iou * scores[None]  # box weights
-                x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
-                # i = i[iou.sum(1) > 1]  # require redundancy
-            except:  # possible CUDA error https://github.com/ultralytics/yolov3/issues/1139
-                with open("debug.txt",'a') as f:
-                    f.write("error in new NMS CUDA\n")
-                pass
+            # update boxes as boxes(i,4) = weights(i,n) * boxes(n,4)
+            iou = box_iou(boxes[i], boxes) > iou_thres  # iou matrix
+            weights = iou * scores[None]  # box weights
+            x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
+            if redundant:
+                i = i[iou.sum(1) > 1]  # require redundancy
 
         output[xi] = x[i]
         if (time.time() - t) > time_limit:
+            print(f'WARNING: NMS time limit {time_limit}s exceeded')
             break  # time limit exceeded
 
     return output
@@ -909,6 +922,30 @@ def plot_results(start=0, stop=0):  # from utils.utils import *; plot_results()
     fig.tight_layout()
     ax[4].legend()
     fig.savefig('results.png', dpi=300)
+
+def rois_augmentation_for_depth(targets,sigma_shape,sigma_center):
+    new_targets=targets # rois augmentation for depth prediction
+
+    for i in range(len(targets)):
+        sigma_shape=sigma_shape #Bbox width and height will be augmented with a max of 20% of their original value
+        sigma_center=sigma_center #Bbox 3d centers will be augmented with a max of 2% of their original value
+        h_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
+        w_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
+        x_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
+        y_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
+        x1=(new_targets[i,2]+x_var*new_targets[i,2])-(new_targets[i,4]+w_var*new_targets[i,4])/2
+        x2=(new_targets[i,2]+x_var*new_targets[i,2])+(new_targets[i,4]+w_var*new_targets[i,4])/2
+        y1=(new_targets[i,3]+x_var*new_targets[i,3])-(new_targets[i,5]+w_var*new_targets[i,5])/2
+        y2=(new_targets[i,3]+x_var*new_targets[i,3])+(new_targets[i,5]+w_var*new_targets[i,5])/2
+        
+        if min(x1,x2)>=0 and max(x1,x2)<=1:
+            new_targets[i,2]+=x_var*new_targets[i,2]
+            new_targets[i,4]+=w_var*new_targets[i,4]
+        
+        if min(y1,y2)>=0 and max(y1,y2)<=1:
+            new_targets[i,3]+=y_var*new_targets[i,3]
+            new_targets[i,5]+=h_var*new_targets[i,5]
+    return new_targets
 
 
 def compute_rot_loss(t_alpha,orient_pred,l_orientation):

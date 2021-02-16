@@ -10,6 +10,59 @@ from torch.autograd import Variable
 
 ONNX_EXPORT = False
 
+def compute_bbox_error(output,targets,width,height,iou_thres):
+    associated=[]
+    len_target=0
+    len_pred=0
+    roi=[torch.tensor([],device=targets.device).view(0,4)]*len(output)
+    for si, pred in enumerate(output):
+            valid_pred=[]
+            labels = targets[targets[:, 0] == si, 1:]
+            nl = len(labels)
+            tcls = labels[:, 0].tolist() if nl else []  # target class
+
+            if len(pred)==0:
+                continue
+
+
+            # Assign all predictions as incorrect
+            correct = [0] * len(pred)
+            if nl:
+                detected = []
+                tcls_tensor = labels[:, 0]
+
+                # target boxes
+                tbox = xywh2xyxy(labels[:, 1:5])
+                tbox[:, [0, 2]] *= width
+                tbox[:, [1, 3]] *= height
+                # Search for correct predictions
+                for i, (*pbox, pconf, pcls) in enumerate(pred):
+
+                    # Break if all targets already located in image
+                    # if len(detected) == nl:
+                    #     break
+
+                    # Continue if predicted class not among image classes
+                    # if pcls.item() not in tcls:
+                    #     continue
+
+                    # Best iou, index between pred and targets
+                    # m = (pcls == tcls_tensor).nonzero().view(-1)
+                    iou, bi = bbox_iou(pbox, tbox).max(0)
+                    # If iou > threshold and class is correct mark as correct
+                    if iou > iou_thres:  # and pcls == tcls[bi]:
+                        correct[i] = 1
+                        detected.append(i)
+                        
+                        valid_pred.append(pred[i][:4])
+
+                        associated.append((bi.cpu().item()+len_target,i+len_pred))
+            if len(valid_pred)>0:
+                roi[si]=torch.cat(valid_pred).view(-1,4)
+            len_target+=len(labels)
+            len_pred+=len(output[si])
+    return associated,roi
+
 
 class Darknet53(nn.Module):
     def __init__(self, cfg, img_size=(416, 416), ):
@@ -551,7 +604,8 @@ class Model(nn.Module):
                 line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
                 io.append(line)
             rois=torch.cat(io,1)
-            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+            # rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+            rois = new_non_max_suppression(rois.clone(), conf_thres=conf_thres, iou_thres=nms_thres)
             for i,roi in enumerate(rois):
                 if roi is None:
                     rois[i]=torch.tensor([]).to(x.device).view(0,7)
@@ -590,7 +644,8 @@ class Model(nn.Module):
                 line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
                 io.append(line)
             rois=torch.cat(io,1)
-            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+            # rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+            rois = new_non_max_suppression(rois.clone(), conf_thres=conf_thres, iou_thres=nms_thres)
             for i,roi in enumerate(rois):
                 if roi is None:
                     rois[i]=torch.tensor([]).to(x.device).view(0,7)
@@ -623,11 +678,35 @@ class Model(nn.Module):
         
         
         else:
-            p ,features,_=  self.Yolov3(x) # inference output, training output
+            width,height=x.shape[2:]
+            p ,features,io_orig=  self.Yolov3(x) # inference output, training output
+            
+            
+            #compute rois
+            io=[]
+            for line in io_orig:
+                line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
+                io.append(line)
+            rois=torch.cat(io,1)
+            rois = new_non_max_suppression(rois.clone(), conf_thres=conf_thres, iou_thres=nms_thres)
+            # rois = non_max_suppression(rois.clone(), conf_thres=conf_thres, nms_thres=nms_thres)
+            for i,roi in enumerate(rois):
+                if roi is None:
+                    rois[i]=torch.tensor([]).to(x.device).view(0,7)
+                    continue
+            
+            device_id=int(str(x.device)[-1])
+            # 
+            
+            #Keep only good rois
+            associated,rois=compute_bbox_error(rois,targets,width,height,0.5)
+            # associated,rois=compute_bbox_error(rois,targets,width,height,nms_thres)
+            
+            roi=[ torch.clamp(bbox[:,:4],min=0,max=width) for bbox in rois]
             
             #Compute 3D center or object depth using GT bbox
             #For multi-gpu
-            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/16.0, aligned=True)
+            pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/16.0, aligned=True)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
@@ -644,7 +723,7 @@ class Model(nn.Module):
             
             rotation=torch.cat([orientation_pred[:,0:2],b1sin,b1cos,orientation_pred[:,4:6],b2sin,b2cos],1)
             
-            return p,center_pred,depth_pred,dimension_pred,rotation
+            return p,center_pred,depth_pred,dimension_pred,rotation,associated
         
         
     def _init_weights(self):

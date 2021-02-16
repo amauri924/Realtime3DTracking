@@ -373,7 +373,7 @@ def test(
 
 
     # Dataloader
-    dataset = LoadImagesAndLabels(test_path, img_size, batch_size,rect=False,depth_aug=True)
+    dataset = LoadImagesAndLabels(test_path, img_size, batch_size,rect=False,depth_aug=False)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
                             num_workers=available_cpu,
