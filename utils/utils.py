@@ -276,10 +276,10 @@ def get_depth(pred):
     depth=1/pred -1
     return depth
 
-def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_augmented, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0,associated=[]):  # predictions, targets, model
+def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred,new_bboxs, targets, model,img_shape,calib,resize_matrix,default_dims_tensor, giou_loss=True, rank=0,associated=[]):  # predictions, targets, model
     calib=calib.to(pred_depth.device)
     ft = torch.cuda.FloatTensor if p[0].is_cuda else torch.Tensor
-    lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation,lloc_cent = ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank)
+    lxy, lwh, lcls, lobj, lcent, ldepth,ldim,l_orientation,lloc_cent,lbbox_off = ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank),ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank), ft([0]).to(rank)
     txy, twh, tcls, tbox, indices, anchor_vec, nc = build_targets(model, targets)
 #    with open(str(rank)+'.txt',"a") as f:
 #        f.write("targets"+str(targets)+'\n')
@@ -297,7 +297,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
     BCEdepth = nn.BCEWithLogitsLoss(pos_weight=ft([1]).to(rank), reduction='sum')
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=ft([h['obj_pw']]).to(rank), reduction='sum')
     L1loss=torch.nn.L1Loss()
-    
+    smoothL1=torch.nn.SmoothL1Loss()
     L2loss = torch.nn.MSELoss()
     
     CE= nn.CrossEntropyLoss()
@@ -353,32 +353,31 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
     #     return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation,lloc_cent, loss)).detach()
         
     pcent= p_center.view(-1,2) #Associated 3D centers
-    gt_depth=targets_augmented[:,8].clone().view(-1,1)
+    gt_depth=targets[:,8].clone().view(-1,1)
     p_depth=pred_depth
     
 #    
 #    pdim=dim_pred
     
-    tdim=targets_augmented[:,9:12].clone()
+    tdim=targets[:,9:12].clone()
     
     
-    try:
-        tdim_offsets=torch.zeros_like(dim_pred)
-        for image_idx in range(len(tdim_offsets)):
-            tdim_offsets[image_idx,:,:]=default_dims_tensor/200 - tdim[image_idx,:]
-            
-        pdim_closest=torch.cat([dim_pred[idx,int(index),:] for idx,index in enumerate(targets_augmented[:,1])]).view(-1,3) #Select center prediction corresponding to the target class
-        tdim_closest=torch.cat([tdim_offsets[idx,int(index),:] for idx,index in enumerate(targets_augmented[:,1])]).view(-1,3)
-    except:
-        print("err")
+
+    tdim_offsets=torch.zeros_like(dim_pred)
+    for image_idx in range(len(tdim_offsets)):
+        tdim_offsets[image_idx,:,:]=default_dims_tensor/200 - tdim[image_idx,:]
+        
+    pdim_closest=torch.cat([dim_pred[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3) #Select center prediction corresponding to the target class
+    tdim_closest=torch.cat([tdim_offsets[idx,int(index),:] for idx,index in enumerate(targets[:,1])]).view(-1,3)
+
     pdim=dim_pred
     
     
-    t_alpha=targets_augmented[:,13:14].clone()
+    t_alpha=targets[:,13:14].clone()
     l_orientation=compute_rot_loss(t_alpha,orient_pred,l_orientation)*100
 
 #    print("abs_rel_err_depth:"+str(abs_rel_err_depth))
-    rois=targets_augmented[:,2:6].clone().to(dtype=pdim.dtype) # Rois closest to anchors 
+    rois=targets[:,2:6].clone().to(dtype=pdim.dtype) # Rois closest to anchors 
     rois[:,0]*=img_shape[0]
     rois[:,2]*=img_shape[0]
     rois[:,1]*=img_shape[1]
@@ -387,7 +386,7 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
     #batch numbers
 #    batch_num=targets[:,0].cpu().numpy()
     
-    target_cent=targets_augmented[:,6:8].clone()
+    target_cent=targets[:,6:8].clone()
     target_cent[:,0]*=img_shape[0]
     target_cent[:,1]*=img_shape[1]
 
@@ -407,9 +406,9 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
     
     lcent += L1loss(pcent,target_cent)
     
-    ldepth += L1loss(p_depth*200,gt_depth*200)
+    ldepth += L1loss(p_depth*100,gt_depth*200)
     
-    lloc_cent+=compute_loc_cent_loss(target_cent_loc,targets_augmented[:,0],gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,lloc_cent)
+    lloc_cent+=compute_loc_cent_loss(target_cent_loc,targets[:,0],gt_depth,rois,img_shape,resize_matrix,calib,pcent,p_depth,lloc_cent)
     
     
     lxy *= (k * h['giou']) / nt
@@ -422,7 +421,12 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
     lloc_cent *= bs/64
     l_orientation *= bs/64
 
-
+    if len(associated)>0:
+        indxs_target=torch.tensor([idx[0] for idx in associated],device=targets.device)
+        rois=torch.index_select(rois,0,indxs_target)
+        # rois=xywh2xyxy(rois.view(-1,4))
+        lbbox_off += smoothL1(new_bboxs,rois)
+        lbbox_off *= bs/64
     
 
     
@@ -430,10 +434,10 @@ def compute_loss(p,p_center,pred_depth,dim_pred,orient_pred, targets,targets_aug
 #    ldepth/=10
     if not torch.isfinite(ldepth):
         print("err")
-    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation +lloc_cent
+    loss = lxy + lwh + lobj + lcls + lcent + ldepth + ldim + l_orientation +lloc_cent+ lbbox_off
 #    loss=lconf_depth+ldepth
 
-    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation,lloc_cent, loss)).detach()
+    return loss, torch.cat((lxy, lwh, lobj, lcls,lcent,ldepth,ldim,l_orientation,lloc_cent,lbbox_off, loss)).detach()
 
 
 
@@ -910,6 +914,30 @@ def plot_results(start=0, stop=0):  # from utils.utils import *; plot_results()
     ax[4].legend()
     fig.savefig('results.png', dpi=300)
 
+def rois_augmentation_for_depth(targets,sigma_shape,sigma_center):
+    new_targets=targets # rois augmentation for depth prediction
+
+    for i in range(len(targets)):
+        sigma_shape=sigma_shape #Bbox width and height will be augmented with a max of 20% of their original value
+        sigma_center=sigma_center #Bbox 3d centers will be augmented with a max of 2% of their original value
+        h_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
+        w_var=random.random()*sigma_shape if bool(random.randint(0,1)) else -random.random()*sigma_shape
+        x_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
+        y_var=random.random()*sigma_center if bool(random.randint(0,1)) else -random.random()*sigma_center
+        x1=(new_targets[i,2]+x_var*new_targets[i,2])-(new_targets[i,4]+w_var*new_targets[i,4])/2
+        x2=(new_targets[i,2]+x_var*new_targets[i,2])+(new_targets[i,4]+w_var*new_targets[i,4])/2
+        y1=(new_targets[i,3]+x_var*new_targets[i,3])-(new_targets[i,5]+w_var*new_targets[i,5])/2
+        y2=(new_targets[i,3]+x_var*new_targets[i,3])+(new_targets[i,5]+w_var*new_targets[i,5])/2
+        
+        if min(x1,x2)>=0 and max(x1,x2)<=1:
+            new_targets[i,2]+=x_var*new_targets[i,2]
+            new_targets[i,4]+=w_var*new_targets[i,4]
+        
+        if min(y1,y2)>=0 and max(y1,y2)<=1:
+            new_targets[i,3]+=y_var*new_targets[i,3]
+            new_targets[i,5]+=h_var*new_targets[i,5]
+    return new_targets
+
 
 def compute_rot_loss(t_alpha,orient_pred,l_orientation):
     
@@ -974,7 +1002,7 @@ def compute_loc_cent_loss(target_cent,targets_idx,gt_depth,rois,img_shape,resize
     tloc_2d_homo[0,:]=tloc_2d_homo[0,:]/img_shape[0]
     tloc_2d_homo[1,:]=tloc_2d_homo[1,:]/img_shape[1]
     
-    ploc_2d_homo=pcent.clone()
+    ploc_2d_homo=pcent
     ploc_2d_homo[:,1]*=rois[:,3]
     ploc_2d_homo[:,0]*=rois[:,2]
     ploc_2d_homo=ploc_2d_homo+rois[:,:2]
@@ -999,7 +1027,7 @@ def compute_loc_cent_loss(target_cent,targets_idx,gt_depth,rois,img_shape,resize
             ploc_pixels_homo=torch.cat((ploc_pixels,torch.zeros(1,ploc_pixels.shape[1],device=target_cent.device)+1),0)
             
             tloc_pixels_homo[:3,:]*=valid_tdepth.T*200
-            ploc_pixels_homo[:3,:]*=valid_pdepth.T*200
+            ploc_pixels_homo[:3,:]*=valid_pdepth.T*100
             
             
             with torch.cuda.amp.autocast(enabled=False):

@@ -6,9 +6,54 @@ from utils.parse_config import *
 from utils.utils import *
 import torchvision
 from torch.autograd import Variable
-
+import copy
 
 ONNX_EXPORT = False
+
+def compute_bbox_error(output,targets,width,height,iou_thres):
+    associated=[]
+    len_target=0
+    len_pred=0
+    roi=[torch.tensor([],device=targets.device).view(0,4)]*len(output)
+    for si, pred in enumerate(output):
+            valid_pred=[]
+            labels = targets[targets[:, 0] == si, 1:]
+            nl = len(labels)
+            tcls = labels[:, 0].tolist() if nl else []  # target class
+
+            if len(pred)==0:
+                continue
+
+
+            # Assign all predictions as incorrect
+            correct = [0] * len(pred)
+            if nl:
+                detected = []
+                tcls_tensor = labels[:, 0]
+
+                # target boxes
+                tbox = xywh2xyxy(labels[:, 1:5])
+                tbox[:, [0, 2]] *= width
+                tbox[:, [1, 3]] *= height
+                # Search for correct predictions
+                for i, (*pbox, pconf, pcls_conf, pcls) in enumerate(pred):
+
+                    # Best iou, index between pred and targets
+                    # m = (pcls == tcls_tensor).nonzero().view(-1)
+                    iou, bi = bbox_iou(pbox, tbox).max(0)
+                    # If iou > threshold and class is correct mark as correct
+                    if iou > iou_thres:  # and pcls == tcls[bi]:
+                        correct[i] = 1
+                        detected.append(i)
+                        
+                        valid_pred.append(pred[i][:4])
+
+                        associated.append((bi.cpu().item()+len_target,i+len_pred))
+            if len(valid_pred)>0:
+                roi[si]=torch.cat(valid_pred).view(-1,4)
+            len_target+=len(labels)
+            len_pred+=len(output[si])
+    return associated,roi
 
 
 class Darknet53(nn.Module):
@@ -518,6 +563,41 @@ class orient_pred(nn.Module):
         return x
 
 
+class bbox_regression(nn.Module):
+    
+    def __init__(self,nc,num_channel):
+        super(bbox_regression, self).__init__()
+        self.nc=nc
+        self.num_channel=num_channel
+#        self.dep = nn.Sequential(
+        self.conv1=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn1=nn.BatchNorm2d(num_channel)
+        self.relu=nn.LeakyReLU(0.1, inplace=True)
+        self.conv2=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn2=nn.BatchNorm2d(num_channel)
+
+        self.conv3=nn.Conv2d(num_channel, num_channel,
+                  kernel_size=3, stride=1, padding=0, bias=False)
+        self.bn3=nn.BatchNorm2d(num_channel)
+        self.conv4=nn.Conv2d(num_channel, 4, kernel_size=1,
+                  stride=1, padding=0, bias=True)
+
+
+
+    def forward(self,x):
+        x=self.conv1(x)
+        x=self.bn1(x)
+        x=self.relu(x)
+        x=self.conv2(x)
+        x=self.bn2(x)
+        x=self.conv3(x)
+        if x.shape[0]>1:
+            x=self.bn3(x)
+        x=self.conv4(x).view(-1,4)
+        return x
+
 
 class Model(nn.Module):
     """YOLOv3 object detection model"""
@@ -533,12 +613,13 @@ class Model(nn.Module):
         self.center_prediction=center_pred(self.nc,self.num_channel)
         self.dimension_prediction=dim_pred(self.nc,self.num_channel)
         self.orientation_prediction=orient_pred(self.nc,self.num_channel)
+        self.bbox_regression=bbox_regression(self.nc,self.num_channel)
         self.transfer=transfer
         self.hyp=hyp
         
 
 
-    def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0,testing=False,detect=False):
+    def forward(self, x, var=None,targets=None,conf_thres=0,nms_thres=0,testing=False,detect=False,input_roi=None):
 
         if testing:
             self.transfer=False
@@ -561,7 +642,7 @@ class Model(nn.Module):
             roi=targets[:,2:6]
             if len(roi)==0:
                 return rois,torch.tensor([]),torch.tensor([])
-            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/16.0, aligned=True)
+            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/16.0, aligned=False)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
@@ -583,7 +664,7 @@ class Model(nn.Module):
             return rois,center_pred,depth_pred,dimension_pred,rotation
         
         elif detect:
-            _,_,width,_=x.shape
+            _,height,width,_=x.shape
             _ ,features,io_orig=  self.Yolov3(x) # inference output, training output
             io=[]
             for line in io_orig:
@@ -595,12 +676,34 @@ class Model(nn.Module):
                 if roi is None:
                     rois[i]=torch.tensor([]).to(x.device).view(0,7)
                     continue
-            
+            pred_rois=copy.deepcopy(rois)
             device_id=int(str(x.device)[-1])
-            roi=[ torch.clamp(bbox[:,:4],min=0,max=width) for bbox in rois]
+            roi_yolo=[ torch.clamp(bbox[:,:4],min=0,max=width) for bbox in rois]
                 
                 # rois[:][:,:4]]
-            pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/16.0,aligned=True)
+            pooled_features=torchvision.ops.roi_align(features, roi_yolo, (7,7), spatial_scale=1/16.0,aligned=False)
+            bbox_offset=self.bbox_regression(pooled_features)
+            
+            i=0
+            for k,roi in enumerate(rois):
+                if len(roi)>0:
+                    roi[:,:4]=xyxy2xywh(roi[:,:4].view(-1,4))
+                    roi[:,0]+=bbox_offset[i:i+len(roi),0]*width/10
+                    roi[:,1]+=bbox_offset[i:i+len(roi),1]*height/10
+                    roi[:,2]+=bbox_offset[i:i+len(roi),2]*width/10
+                    roi[:,3]+=bbox_offset[i:i+len(roi),3]*height/10
+                    roi[:,:4]=xywh2xyxy(roi[:,:4].view(-1,4))
+                    # bbox_w=roi[:,2]-roi[:,0]
+                    # bbox_h=roi[:,3]-roi[:,1]
+                    # roi[:,0]+=bbox_offset[i:i+len(roi),0]*bbox_w
+                    # roi[:,2]+=bbox_offset[i:i+len(roi),2]*bbox_w
+                    # roi[:,1]+=bbox_offset[i:i+len(roi),1]*bbox_h
+                    # roi[:,3]+=bbox_offset[i:i+len(roi),3]*bbox_h
+                    i+=len(roi)
+            
+            roi=[ torch.clamp(bbox[:,:4],min=0,max=width) for bbox in rois]
+            pooled_features=torchvision.ops.roi_align(features, roi, (7,7), spatial_scale=1/16.0,aligned=False)
+            
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
@@ -619,15 +722,56 @@ class Model(nn.Module):
             
             del pooled_features
             del features
-            return rois,center_pred,depth_pred,dimension_pred,rotation
+            return pred_rois,center_pred,depth_pred,dimension_pred,rotation,rois
         
         
         else:
-            p ,features,_=  self.Yolov3(x) # inference output, training output
+            width,height=x.shape[2:]
+            p ,features,io_orig=  self.Yolov3(x) # inference output, training output
+            
+            
+            #compute rois
+            io=[]
+            for line in io_orig:
+                line=line.view(io_orig[0].shape[0], -1, 5 + self.nc)
+                io.append(line)
+            rois=torch.cat(io,1)
+            rois = non_max_suppression(rois, conf_thres=conf_thres, nms_thres=nms_thres)
+            for i,roi in enumerate(rois):
+                if roi is None:
+                    rois[i]=torch.tensor([]).to(x.device).view(0,7)
+                    continue
+            
+            device_id=int(str(x.device)[-1])
+            # 
+            
+            #Keep only good rois
+            associated,rois=compute_bbox_error(rois,targets,width,height,0.5)
+            
+            rois=[ torch.clamp(bbox[:,:4],min=0,max=width) for bbox in rois]
             
             #Compute 3D center or object depth using GT bbox
             #For multi-gpu
-            pooled_features=torchvision.ops.roi_align(features, targets, (7,7), spatial_scale=1/16.0, aligned=True)
+            pooled_features=torchvision.ops.roi_align(features, rois, (7,7), spatial_scale=1/16.0, aligned=False)
+            bbox_offset=self.bbox_regression(pooled_features)
+            
+            rois=torch.cat(rois)
+            #compute new bboxes
+            if len(rois)>0:
+                # bbox_w=rois[:,2]-rois[:,0]
+                # bbox_h=rois[:,3]-rois[:,1]
+                # rois[:,0]+=bbox_offset[:,0]*bbox_w
+                # rois[:,2]+=bbox_offset[:,2]*bbox_w
+                # rois[:,1]+=bbox_offset[:,1]*bbox_h
+                # rois[:,3]+=bbox_offset[:,3]*bbox_h
+                rois=xyxy2xywh(rois.view(-1,4))
+                rois[:,0]+=bbox_offset[:,0]*width/10
+                rois[:,1]+=bbox_offset[:,1]*height/10
+                rois[:,2]+=bbox_offset[:,2]*width/10
+                rois[:,3]+=bbox_offset[:,3]*height/10
+            
+            
+            pooled_features=torchvision.ops.roi_align(features, input_roi, (7,7), spatial_scale=1/16.0, aligned=False)
             depth_pred=self.depth_pred(pooled_features)
             center_pred=self.center_prediction(pooled_features)/100 # Run the 3D prediction
             dimension_pred=self.dimension_prediction(pooled_features)/100
@@ -644,7 +788,7 @@ class Model(nn.Module):
             
             rotation=torch.cat([orientation_pred[:,0:2],b1sin,b1cos,orientation_pred[:,4:6],b2sin,b2cos],1)
             
-            return p,center_pred,depth_pred,dimension_pred,rotation
+            return p,center_pred,depth_pred,dimension_pred,rotation,rois,associated
         
         
     def _init_weights(self):
